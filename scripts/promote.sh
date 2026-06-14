@@ -19,6 +19,7 @@ pr="${1:?pr number required}"
 approval_token="${2:?approval_token required}"
 
 if [ -f "${HOME}/.config/dev-runner/claude.env" ]; then
+  # shellcheck source=/dev/null
   set -a; . "${HOME}/.config/dev-runner/claude.env"; set +a
 fi
 : "${GH_TOKEN:?missing GH_TOKEN}"

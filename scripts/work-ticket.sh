@@ -34,6 +34,7 @@ AGENT_IMAGE="${ASHIGARU_AGENT_IMAGE:-localhost/rotv-dev-runner:latest}"
 # Tokens normally arrive via the container env-file (systemd). Fall back to the
 # devrunner env file if present (host/native runs).
 if [ -f "${HOME}/.config/dev-runner/claude.env" ]; then
+  # shellcheck source=/dev/null
   set -a; . "${HOME}/.config/dev-runner/claude.env"; set +a
 fi
 

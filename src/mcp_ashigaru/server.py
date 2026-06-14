@@ -19,6 +19,7 @@ Design invariants (mirror the security model of the sandbox):
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
@@ -33,16 +34,19 @@ from fastmcp import FastMCP
 # at the SAME path here and is visible to devrunner's rootless podman, so the
 # worker containers can bind-mount the clone. (A `-v` issued over the mounted
 # socket is resolved host-side, not inside this container — hence the shared path.)
-RUNNER_DIR = Path(os.environ.get("ASHIGARU_RUNNER_DIR", "/app/runner"))
+RUNNER_DIR = Path(os.environ.get("ASHIGARU_RUNNER_DIR", "/app/scripts"))
 STATE_DIR = Path(os.environ.get("ASHIGARU_STATE_DIR", "/home/devrunner/ashigaru"))
 RUNS_DIR = STATE_DIR / "runs"
 WRAPPER = RUNNER_DIR / "work-ticket.sh"
 
 REPO_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 
+# Default streamable-http port for the lotor systemd unit (see Containerfile).
+DEFAULT_PORT = 8020
+
 mcp = FastMCP(
     "mcp-ashigaru",
-    version="0.1.0",
+    version="0.3.0",
     instructions=(
         "Drive Claude Code as a headless dev sub-agent on the crunchtools fleet. "
         "work_ticket starts a run (clone repo, fix a GitHub issue with Sonnet, run "
@@ -52,19 +56,18 @@ mcp = FastMCP(
 )
 
 
-def _run_dir(run_id: str) -> Path:
+def _digest(run_id: str) -> dict[str, Any]:
+    """Summarize a run's persisted event stream into a phone-readable digest."""
     # run_id is server-minted, but constrain anyway (defense in depth).
     if not re.fullmatch(r"[a-z0-9-]{1,64}", run_id):
         raise ValueError("invalid run_id")
-    return RUNS_DIR / run_id
-
-
-def _digest(run_id: str) -> dict[str, Any]:
-    """Summarize a run's persisted event stream into a phone-readable digest."""
-    d = _run_dir(run_id)
+    d = RUNS_DIR / run_id
     meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
     events_path = d / "events.jsonl"
-    phase, last_actions, pr_url, is_error = meta.get("phase", "unknown"), [], meta.get("pr_url"), None
+    phase = meta.get("phase", "unknown")
+    pr_url = meta.get("pr_url")
+    last_actions: list[str] = []
+    is_error = None
     if events_path.exists():
         for line in events_path.read_text().splitlines():
             try:
@@ -167,14 +170,12 @@ async def promote(pr: int, approval_token: str) -> dict[str, Any]:
 def main() -> None:
     """Entry point. Default stdio; the lotor systemd unit runs streamable-http:8020
     on the crunchtools network so the airlock gateway can reach it."""
-    import argparse
-
     parser = argparse.ArgumentParser(description="MCP server for the Ashigaru dev runners")
     parser.add_argument(
         "--transport", choices=["stdio", "sse", "streamable-http"], default="stdio"
     )
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8020)
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
 
     if args.transport == "stdio":
