@@ -1,6 +1,6 @@
 [project]
 name = "mcp-ashigaru-crunchtools"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP bridge that dispatches Claude Code as headless dev sub-agents (the Ashigaru corps under Kagetora)"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
@@ -43,6 +43,25 @@ packages = ["src/mcp_ashigaru"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "S", "B", "C4", "C901", "DTZ", "T10", "ISC", "PIE", "PT", "RET", "SIM", "TID", "TCH", "ARG", "PLC", "PLE", "PLR", "PLW", "TRY", "RUF"]
+ignore = [
+    "S101",     # assert allowed in tests
+    "TRY003",   # long exception messages ok
+    "PLR0913",  # many arguments ok for tools
+    "PLW0603",  # global statement ok for singletons
+    "TID252",   # relative imports in package ok
+    "S603",     # subprocess calls are deterministic wrappers, not user input
+    "S607",     # launching bash/podman by name is intentional
+]
+
+[tool.ruff.lint.pylint]
+max-branches = 12
+max-statements = 50
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "PLC0415", "PLR2004"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

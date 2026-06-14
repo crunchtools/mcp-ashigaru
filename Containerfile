@@ -26,7 +26,7 @@
 FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
 
 LABEL name="mcp-ashigaru-crunchtools" \
-      version="0.2.0" \
+      version="0.3.0" \
       summary="MCP bridge dispatching Claude Code as headless dev sub-agents" \
       description="Kagetora's Ashigaru corps: drive Claude Code to fix issues and open PRs, in an unprivileged sandbox" \
       maintainer="crunchtools.com" \
@@ -48,17 +48,17 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
-COPY runner/ /app/runner/
+COPY scripts/ /app/scripts/
 
 RUN python3 -m pip install --no-cache-dir . && \
     python3 -c "from mcp_ashigaru import main; print('Installation verified')" && \
-    chmod +x /app/runner/*.sh
+    chmod +x /app/scripts/*.sh
 
 # Run as devrunner's uid so files written to the shared state volume (and the
 # bind-mounted rootless socket) are owned by devrunner (1000) host-side.
 RUN mkdir -p /home/devrunner && chown 1000:1000 /home/devrunner
 ENV HOME=/home/devrunner \
-    ASHIGARU_RUNNER_DIR=/app/runner \
+    ASHIGARU_RUNNER_DIR=/app/scripts \
     ASHIGARU_STATE_DIR=/home/devrunner/ashigaru
 USER 1000
 
