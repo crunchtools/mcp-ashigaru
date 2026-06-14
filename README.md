@@ -44,7 +44,7 @@ profiles, the merge-train, web previews).
 |------|---------|
 | `work_ticket(repo, issue)` | Start a run: clone `repo`, fix issue `#issue`, run the repo's gates, open a PR. Runs the **escalation ladder** internally (below). Returns a `run_id`. |
 | `status(run_id)` | On-demand digest: phase, recent agent actions, which **model tier** the run reached, **live CI/build checks** for the PR, and the PR URL. This is what Kagetora answers from when you ask "what's the status of the builds?" |
-| `promote(pr, approval_token)` | **Gated.** Ship a reviewed PR to production via the repo's deploy path. Refuses without a human-approval marker — the coding agent never reaches it. |
+| `promote(repo, pr)` | Squash-merge a reviewed PR to ship via the repo's pipeline. **Trust-based** — no approval token; authorized by your Signal instruction to Kagetora, acting on airlock-filtered content. |
 
 ## Model escalation (cost-tiered intelligence)
 
@@ -69,7 +69,7 @@ starting cold. `status` reports which tier a run reached.
 - **Unprivileged sandbox.** Everything runs as the `devrunner` user on lotor with rootless podman — no root, no sudo, no path to production, prod secrets, or other services. Blast radius = devrunner's sandbox.
 - **Capability starvation for the agent.** The coding agent's container holds *only* a Claude token. No GitHub token (can't push or touch other repos), no podman socket, no prod creds. Its entire reach is "edit files in this one checkout."
 - **Deterministic wrappers hold the keys.** git/gh, podman gates, and deploy live in fixed bash scripts that can't be prompt-injected — not in the LLM surface and not in the agent.
-- **Production is gated.** Promotion is a separate, root-level action behind explicit human (Signal) approval that the agent never holds. Defense in depth: isolation *and* a human gate on the one irreversible step.
+- **Production promotion is trust-based, not token-gated.** It is authorized by the maintainer's Signal instruction to Kagetora — designed for phone-driven ops — acting on airlock-filtered content. Defense in depth comes from that filtered content lane plus the fact that a squash-merge is revertable and host rollout is a separate step, not from an out-of-band token the agent would have to hold.
 
 ## Run
 
