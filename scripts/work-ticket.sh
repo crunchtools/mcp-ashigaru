@@ -88,7 +88,7 @@ run_agent() {
     -v "${repodir}:/work:z" -w /work \
     -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
     "$AGENT_IMAGE" \
-    claude -p "$prompt" --model "$model" --permission-mode full \
+    claude -p "$prompt" --model "$model" --permission-mode bypassPermissions \
       --allowedTools "Read,Edit,Write,Bash,Glob,Grep" --max-turns "$max_turns" \
       --output-format stream-json --verbose \
       >>"${rundir}/events.jsonl" 2>>"${rundir}/agent.err"
