@@ -25,6 +25,7 @@ TEMPLATE="${CONFIG_DIR}/preview-rotv-template.env"
 HOST_PODMAN="${ASHIGARU_HOST_PODMAN:-unix:///run/host-podman/podman.sock}"
 MAX_SLOTS=5
 PROD_CONTAINER="rootsofthevalley.org"
+ROTV_BASE_IMAGE="${ASHIGARU_ROTV_BASE_IMAGE:-quay.io/crunchtools/rotv-base:latest}"
 
 # All podman commands in this script use the host socket.
 hpodman() { CONTAINER_HOST="$HOST_PODMAN" podman "$@"; }
@@ -99,6 +100,7 @@ echo "Building image from ${repodir} ..."
 image_tag="localhost/ashigaru-preview-${run_id}:latest"
 
 if ! hpodman build \
+    --build-arg "BASE_IMAGE=${ROTV_BASE_IMAGE}" \
     -t "$image_tag" "$repodir" \
     >> "${rundir}/preview.log" 2>&1; then
   echo "ERROR: image build failed (see ${rundir}/preview.log)"
