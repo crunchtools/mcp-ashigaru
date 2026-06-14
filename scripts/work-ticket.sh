@@ -88,8 +88,8 @@ run_agent() {
     -v "${repodir}:/work:z" -w /work \
     -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
     "$AGENT_IMAGE" \
-    claude -p "$prompt" --model "$model" --permission-mode acceptEdits \
-      --allowedTools "Read,Edit,Write,Glob,Grep" --max-turns "$max_turns" \
+    claude -p "$prompt" --model "$model" --permission-mode full \
+      --allowedTools "Read,Edit,Write,Bash,Glob,Grep" --max-turns "$max_turns" \
       --output-format stream-json --verbose \
       >>"${rundir}/events.jsonl" 2>>"${rundir}/agent.err"
 }
@@ -179,7 +179,7 @@ ${last_gate_output:-Unknown}
 INSTRUCTIONS:
 1. Read the relevant code to understand what was already changed and what went wrong.
 2. Fix the issues described in the feedback. Keep changes minimal and focused.
-3. You can only Read/Edit/Write/Glob/Grep — no commands. Reason by reading.
+3. You can Read/Edit/Write/Bash/Glob/Grep. Use Bash to verify your changes. No network or git access.
 End with a short summary: what you fixed this iteration."
 
   run_agent "$repodir" "$rundir" "$prompt" "$model" "$max_turns"
@@ -241,7 +241,7 @@ ${brief}
 INSTRUCTIONS:
 1. Read the relevant code to understand the problem.
 2. Diagnose the root cause and fix it with a MINIMAL, focused change. Do not refactor unrelated code.
-3. You can only Read/Edit/Write/Glob/Grep — you cannot run the test suite or any commands. Reason by reading; the PR's CI runs the gates after you finish.
+3. You can Read/Edit/Write/Bash/Glob/Grep. Use Bash to check syntax, run linters, or verify your changes. You have no network access beyond the Anthropic API, and no git/gh access — the dispatcher handles git operations after you finish.
 End with a short summary: root cause + exactly what you changed."
 
   # ---- Tier 1 attempt -------------------------------------------------------
