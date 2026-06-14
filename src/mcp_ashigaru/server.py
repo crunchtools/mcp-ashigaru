@@ -1,9 +1,12 @@
 """mcp-ashigaru — lets Kagetora drive Claude Code as a headless dev sub-agent.
 
 This is the always-on bridge between Kagetora (the foreman) and the deterministic
-wrapper scripts that do the real work. It runs as the unprivileged `devrunner`
-user on lotor and is reachable by Kagetora through the airlock gateway (added as a
-backend in the kagetora profile).
+wrapper scripts that do the real work. On lotor it runs like every other MCP
+server: a root-managed system container on the `crunchtools` network, reachable
+by Kagetora through the airlock gateway (added as a backend in the kagetora
+profile). The unprivileged `devrunner` user's rootless podman socket is bind
+-mounted in, so the wrapper scripts launch the *workers* (Claude Code) rootless
+as devrunner — only the workers run rootless, never this surface.
 
 Design invariants (mirror the security model of the sandbox):
   - The LLM-facing surface is THIN. These tools take a repo + issue number and
@@ -25,10 +28,15 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-# Where the wrapper scripts + per-run event streams live (devrunner's home).
-RUNNER_HOME = Path(os.environ.get("DEV_RUNNER_HOME", "/home/devrunner"))
-RUNS_DIR = RUNNER_HOME / "runs"
-WRAPPER = RUNNER_HOME / "runner" / "work-ticket.sh"
+# Wrapper scripts are baked into the image (RUNNER_DIR). Per-run state — the repo
+# clone and the event stream — lives on a host volume (STATE_DIR) that is mounted
+# at the SAME path here and is visible to devrunner's rootless podman, so the
+# worker containers can bind-mount the clone. (A `-v` issued over the mounted
+# socket is resolved host-side, not inside this container — hence the shared path.)
+RUNNER_DIR = Path(os.environ.get("ASHIGARU_RUNNER_DIR", "/app/runner"))
+STATE_DIR = Path(os.environ.get("ASHIGARU_STATE_DIR", "/home/devrunner/ashigaru"))
+RUNS_DIR = STATE_DIR / "runs"
+WRAPPER = RUNNER_DIR / "work-ticket.sh"
 
 REPO_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 
@@ -131,7 +139,7 @@ async def promote(pr: int, approval_token: str) -> dict[str, Any]:
         approval_token: the approval marker from the confirmed human gate.
     """
     proc = await asyncio.create_subprocess_exec(
-        "bash", str(RUNNER_HOME / "runner" / "promote.sh"), str(pr), approval_token,
+        "bash", str(RUNNER_DIR / "promote.sh"), str(pr), approval_token,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
     out, _ = await proc.communicate()
