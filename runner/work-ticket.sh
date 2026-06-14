@@ -2,11 +2,24 @@
 # work-ticket.sh — the deterministic dispatcher for one Ashigaru dev run.
 #
 # Baked into the mcp-ashigaru image at /app/runner/. Invoked by server.py as:
-#     bash work-ticket.sh <repo> <issue>
+#     bash work-ticket.sh <repo> <issue> <brief> [model]
 #
 # It mints a run_id, clones the repo onto the shared STATE volume, then DETACHES
-# the long-running work (agent + gates + PR) and returns the run_id immediately
-# on stdout (last line) so the MCP call doesn't block. Poll status(run_id) after.
+# the long-running work (agent + PR) and returns the run_id immediately on stdout
+# (last line) so the MCP call doesn't block. Poll status(run_id) afterwards.
+#
+# SECURITY MODEL (issue #4):
+#   - The GitHub issue is NEVER read here. The caller (Kagetora) passes the
+#     already-airlock-filtered issue text as <brief>, and the sealed sub-agent
+#     only ever sees <brief>. This script does NOT run `gh issue view`, so
+#     untrusted issue content never reaches the agent unfiltered.
+#   - The sub-agent is sealed: ONLY its Claude token (no GH token, no podman
+#     socket). The dispatcher (this script) holds the GH token and performs all
+#     git/gh work (clone, push, PR). The agent has no path to GitHub.
+#   - The worker keeps network access on purpose: the agent IS Claude Code
+#     calling the Anthropic API, so `--network none` would break it. Restricting
+#     egress to anthropic-only (to block exfiltration) needs an egress proxy and
+#     is tracked as separate future hardening.
 #
 # Topology note: the worker container is launched via podman talking to the
 # bind-mounted *rootless devrunner* socket (CONTAINER_HOST). Its `-v` mounts are
@@ -17,7 +30,6 @@ set -uo pipefail
 STATE_DIR="${ASHIGARU_STATE_DIR:-/home/devrunner/ashigaru}"
 ORG="${ASHIGARU_ORG:-crunchtools}"
 AGENT_IMAGE="${ASHIGARU_AGENT_IMAGE:-localhost/rotv-dev-runner:latest}"
-MODEL="${ANTHROPIC_MODEL:-sonnet}"
 
 # Tokens normally arrive via the container env-file (systemd). Fall back to the
 # devrunner env file if present (host/native runs).
@@ -45,7 +57,7 @@ meta_set() {  # meta_set <rundir> <key> <json-value>
 # ---- background run (re-exec of this script) -----------------------------
 if [ "${1:-}" = "--run" ]; then
   shift
-  run_id="$1" repo="$2" issue="$3" branch="$4"
+  run_id="$1" repo="$2" issue="$3" branch="$4" model="${5:-sonnet}"
   rundir="${STATE_DIR}/runs/${run_id}"
   repodir="${STATE_DIR}/work/${run_id}/${repo}"
 
@@ -55,30 +67,33 @@ if [ "${1:-}" = "--run" ]; then
   cd "$repodir" || { set_phase "$rundir" failed; exit 1; }
   git checkout -B "$branch" >/dev/null 2>&1
 
-  # Pull the issue text to brief the agent.
-  set_phase "$rundir" diagnosing
-  issue_text="$(GH_TOKEN="$GH_TOKEN" gh issue view "$issue" -R "${ORG}/${repo}" \
-                  --json title,body -q '"#\(.number? // "'"$issue"'") \(.title)\n\n\(.body)"' 2>>"${rundir}/setup.log")"
-  [ -z "$issue_text" ] && issue_text="GitHub issue #${issue} in ${ORG}/${repo} (issue body unavailable; read the repo and infer)."
+  # The agent works from the filtered brief — never from the live GitHub issue.
+  brief="$(cat "${rundir}/brief.txt" 2>/dev/null)"
+  if [ -z "$brief" ]; then
+    meta_set "$rundir" gate '"no-brief"'
+    set_phase "$rundir" failed
+    exit 1
+  fi
 
   prompt="You are fixing GitHub issue #${issue} in the ${repo} repository (crunchtools fleet).
 
-ISSUE:
-${issue_text}
+TASK (the filtered issue brief provided by the maintainer):
+${brief}
 
-TASK:
-1. Read the relevant code to understand the bug.
+INSTRUCTIONS:
+1. Read the relevant code to understand the problem.
 2. Diagnose the root cause and fix it with a MINIMAL, focused change. Do not refactor unrelated code.
-3. You CANNOT run the test suite or any commands in this container (Read/Edit/Write/Glob/Grep only). Reason by reading; the PR's CI runs the gates after you finish.
+3. You can only Read/Edit/Write/Glob/Grep — you cannot run the test suite or any commands. Reason by reading; the PR's CI runs the gates after you finish.
 End with a short summary: root cause + exactly what you changed."
 
   # Launch the sealed worker (rootless, as devrunner via the mounted socket).
+  # Keeps network for the Anthropic API; holds no GH token and no issue access.
   set_phase "$rundir" editing
   podman run --rm \
     -v "${STATE_DIR}/work/${run_id}/${repo}:/work:z" -w /work \
     -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
     "$AGENT_IMAGE" \
-    claude -p "$prompt" --model "$MODEL" --permission-mode acceptEdits \
+    claude -p "$prompt" --model "$model" --permission-mode acceptEdits \
       --allowedTools "Read,Edit,Write,Glob,Grep" --max-turns 40 \
       --output-format stream-json --verbose \
       >>"${rundir}/events.jsonl" 2>>"${rundir}/agent.err"
@@ -101,7 +116,7 @@ End with a short summary: root cause + exactly what you changed."
 
   body="Fixes #${issue}.
 
-🤖 Autonomous **Ashigaru** run — Kagetora dispatched Claude Code (\`${MODEL}\`) in a sealed, unprivileged sandbox. Diagnosed by code-reading only (no test execution in-sandbox). **Draft, pending CI + human review.** run_id: \`${run_id}\`"
+🤖 Autonomous **Ashigaru** run — Kagetora dispatched Claude Code (\`${model}\`) in a sealed, unprivileged sandbox. Worked from an airlock-filtered brief; diagnosed by code-reading only (no test execution in-sandbox). **Draft, pending CI + human review.** run_id: \`${run_id}\`"
   pr_url="$(GH_TOKEN="$GH_TOKEN" gh pr create --draft -R "${ORG}/${repo}" \
               --base "$base" --head "$branch" \
               --title "fix: issue #${issue} (Ashigaru)" \
@@ -115,6 +130,9 @@ fi
 # ---- foreground setup ----------------------------------------------------
 repo="${1:?repo required}"
 issue="${2:?issue required}"
+brief="${3:?brief required}"
+model="${4:-${ANTHROPIC_MODEL:-sonnet}}"
+repo="${repo##*/}"   # accept "org/repo" — strip the org
 : "${GH_TOKEN:?missing GH_TOKEN}"
 
 run_id="${repo//[^a-z0-9-]/-}-${issue}-$(date +%s)"
@@ -123,8 +141,11 @@ repodir="${STATE_DIR}/work/${run_id}/${repo}"
 branch="fix/issue-${issue}"
 mkdir -p "$rundir" "$(dirname "$repodir")"
 
+# Persist the filtered brief for the detached run (avoids a huge argv re-exec).
+printf '%s' "$brief" > "${rundir}/brief.txt"
+
 cat >"${rundir}/meta.json" <<EOF
-{"run_id":"${run_id}","repo":"${repo}","issue":${issue},"branch":"${branch}","phase":"cloning","pr_url":null,"gate":null,"created":"$(date -Is)"}
+{"run_id":"${run_id}","repo":"${repo}","issue":${issue},"branch":"${branch}","model":"${model}","phase":"cloning","pr_url":null,"gate":null,"created":"$(date -Is)"}
 EOF
 
 if ! git clone --depth 50 \
@@ -136,7 +157,7 @@ if ! git clone --depth 50 \
 fi
 
 # Detach the heavy work; redirect everything so the MCP call's pipe closes.
-setsid bash "$0" --run "$run_id" "$repo" "$issue" "$branch" \
+setsid bash "$0" --run "$run_id" "$repo" "$issue" "$branch" "$model" \
   >>"${rundir}/runner.log" 2>&1 </dev/null &
 disown
 

@@ -1,6 +1,6 @@
 [project]
 name = "mcp-ashigaru-crunchtools"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP bridge that dispatches Claude Code as headless dev sub-agents (the Ashigaru corps under Kagetora)"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"

@@ -26,7 +26,7 @@
 FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
 
 LABEL name="mcp-ashigaru-crunchtools" \
-      version="0.2.0" \
+      version="0.3.0" \
       summary="MCP bridge dispatching Claude Code as headless dev sub-agents" \
       description="Kagetora's Ashigaru corps: drive Claude Code to fix issues and open PRs, in an unprivileged sandbox" \
       maintainer="crunchtools.com" \

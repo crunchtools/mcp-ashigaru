@@ -64,7 +64,7 @@ def _digest(run_id: str) -> dict[str, Any]:
     d = _run_dir(run_id)
     meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
     events_path = d / "events.jsonl"
-    phase, last_actions, gate, pr_url, is_error = meta.get("phase", "unknown"), [], None, meta.get("pr_url"), None
+    phase, last_actions, pr_url, is_error = meta.get("phase", "unknown"), [], meta.get("pr_url"), None
     if events_path.exists():
         for line in events_path.read_text().splitlines():
             try:
@@ -90,23 +90,40 @@ def _digest(run_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def work_ticket(repo: str, issue: int) -> dict[str, Any]:
-    """Start a dev run: clone <repo>, fix GitHub issue #<issue> with Claude (Sonnet),
-    run the repo's quality gates, and open a PR. Returns a run_id immediately; the
-    run continues in the background. Poll status(run_id) for progress.
+async def work_ticket(
+    repo: str, issue: int, brief: str, model: str | None = None
+) -> dict[str, Any]:
+    """Start a dev run: clone <repo>, fix GitHub issue #<issue> from the provided
+    brief, run the repo's quality gates, and open a draft PR. Returns a run_id
+    immediately; the run continues in the background. Poll status(run_id).
+
+    The issue text MUST be passed as `brief` — already airlock-filtered (fetched
+    via mcp-github through the gateway). This server never reads the GitHub issue
+    directly, and the sealed, network-isolated sub-agent only ever sees `brief`.
 
     Args:
-        repo: crunchtools repo name (e.g. "rotv").
-        issue: GitHub issue number to work.
+        repo: repo name; accepts "rotv" or "crunchtools/rotv" (org is stripped).
+        issue: GitHub issue number (used for branch naming / labeling only).
+        brief: the filtered issue text / task description for the agent to work.
+        model: optional starting model tier (e.g. "sonnet", "opus"). Sonnet->Opus
+            escalation is handled internally; this only sets the starting point.
     """
+    if "/" in repo:
+        repo = repo.rsplit("/", 1)[-1]
     if not REPO_RE.match(repo):
         return {"error": f"invalid repo name: {repo!r}"}
     if issue <= 0:
         return {"error": "issue must be a positive integer"}
+    if not brief or not brief.strip():
+        return {"error": "brief is required (the filtered issue text for the agent)"}
     # The wrapper mints the run_id, sets up runs/<id>/, and detaches the agent.
+    args = ["bash", str(WRAPPER), repo, str(issue), brief]
+    if model:
+        args.append(model)
     proc = await asyncio.create_subprocess_exec(
-        "bash", str(WRAPPER), repo, str(issue),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
     out, _ = await proc.communicate()
     run_id = out.decode().strip().splitlines()[-1] if out else ""
