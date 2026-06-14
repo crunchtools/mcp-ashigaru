@@ -31,9 +31,11 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
-RUN pip install --no-cache-dir .
+# Exec-form RUN: the hummingbird python base is shell-less (no /bin/sh), so
+# shell-form `RUN pip ...` fails. Invoke the binaries directly.
+RUN ["python", "-m", "pip", "install", "--no-cache-dir", "."]
 
-RUN python -c "from mcp_ashigaru import main; print('Installation verified')"
+RUN ["python", "-c", "from mcp_ashigaru import main; print('Installation verified')"]
 
 EXPOSE 8020
 ENTRYPOINT ["python", "-m", "mcp_ashigaru"]
