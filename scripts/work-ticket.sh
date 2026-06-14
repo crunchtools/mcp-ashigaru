@@ -84,9 +84,10 @@ json.dump(m, open(sys.argv[1], "w"))
 run_agent() {
   local repodir="$1" rundir="$2" prompt="$3" model="$4" max_turns="$5"
   set_phase "$rundir" editing
-  podman run --rm \
+  podman run --rm --user 1000:1000 \
     -v "${repodir}:/work:z" -w /work \
     -e CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
+    -e HOME=/home/user \
     "$AGENT_IMAGE" \
     claude -p "$prompt" --model "$model" --permission-mode bypassPermissions \
       --allowedTools "Read,Edit,Write,Bash,Glob,Grep" --max-turns "$max_turns" \
