@@ -13,8 +13,9 @@ Design invariants (mirror the security model of the sandbox):
     return status; they do not let the caller run arbitrary commands.
   - The privileged work (git/gh, podman gates, prod deploy) lives in the
     deterministic wrapper scripts, NOT here and NOT in the coding agent.
-  - `promote` is GATED: it refuses unless a human-approval marker is present on
-    the PR, so a confused or injected caller cannot ship to production.
+  - `promote` is trust-based (no token): it squash-merges a reviewed PR on the
+    maintainer's Signal instruction, relying on airlock-filtered content and a
+    revertable merge rather than an out-of-band token the agent would hold.
 """
 
 from __future__ import annotations
@@ -46,12 +47,13 @@ DEFAULT_PORT = 8020
 
 mcp = FastMCP(
     "mcp-ashigaru",
-    version="0.3.0",
+    version="0.4.0",
     instructions=(
         "Drive Claude Code as a headless dev sub-agent on the crunchtools fleet. "
         "work_ticket starts a run (clone repo, fix a GitHub issue with Sonnet, run "
         "the repo's gates, open a PR). status returns a digest of a run on demand. "
-        "promote ships a reviewed PR to production and is GATED on human approval."
+        "promote(repo, pr) squash-merges a reviewed PR to ship via the repo's "
+        "pipeline (trust-based, no token)."
     ),
 )
 
@@ -147,24 +149,33 @@ async def status(run_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def promote(pr: int, approval_token: str) -> dict[str, Any]:
-    """GATED. Promote a reviewed PR to production via the repo's deploy path.
+async def promote(repo: str, pr: int) -> dict[str, Any]:
+    """Promote a reviewed PR to production by merging it (squash merge).
 
-    Refuses unless `approval_token` matches the human-approval marker recorded
-    for this PR (set only through a confirmed Signal approval). This is the hard
-    gate on the one irreversible action — the coding agent never reaches it.
+    Trust-based — there is NO approval token. Promotion is authorized by you, the
+    foreman, acting on the maintainer's Signal instruction; the content you reason
+    over is airlock-filtered. Confirm the PR is clear first with
+    get_pull_request_checks (remember: skipped != failed). The merge is the
+    promotion — the repo's GHA pipeline builds and ships from the default branch.
 
     Args:
-        pr: PR number to promote.
-        approval_token: the approval marker from the confirmed human gate.
+        repo: repo name; accepts "rotv" or "crunchtools/rotv" (org is stripped).
+        pr: pull request number to merge.
     """
+    if "/" in repo:
+        repo = repo.rsplit("/", 1)[-1]
+    if not REPO_RE.match(repo):
+        return {"error": f"invalid repo name: {repo!r}"}
+    if pr <= 0:
+        return {"error": "pr must be a positive integer"}
     proc = await asyncio.create_subprocess_exec(
-        "bash", str(RUNNER_DIR / "promote.sh"), str(pr), approval_token,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        "bash", str(RUNNER_DIR / "promote.sh"), repo, str(pr),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
     out, _ = await proc.communicate()
     ok = proc.returncode == 0
-    return {"pr": pr, "promoted": ok, "detail": out.decode()[-500:]}
+    return {"repo": repo, "pr": pr, "promoted": ok, "detail": out.decode()[-500:]}
 
 
 def main() -> None:
