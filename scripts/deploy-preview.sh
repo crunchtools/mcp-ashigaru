@@ -9,19 +9,25 @@
 # reachable at https://development{N}.crunchtools.com via the reverse proxy.
 #
 # TOPOLOGY: This script runs inside the mcp-ashigaru container (root-managed,
-# crunchtools network). It talks to devrunner's rootless podman socket for image
-# builds and worker containers. But the preview container itself runs on the HOST
-# podman (root), because it needs the `rotv` network and ports bound to the host
-# loopback — same as production and test ROTV containers. So preview launch uses
-# the HOST podman (no CONTAINER_HOST override).
+# crunchtools network). Two podman sockets are available:
+#   CONTAINER_HOST  — devrunner's rootless socket (for sealed worker containers)
+#   HOST_PODMAN     — the host root socket (for preview containers and prod access)
+#
+# Preview containers run on HOST podman because they need the `rotv` network and
+# ports bound to the host loopback — same as production and test ROTV containers.
+# Image builds also use HOST podman so the preview image is visible to the host.
 set -uo pipefail
 
 STATE_DIR="${ASHIGARU_STATE_DIR:-/home/devrunner/ashigaru}"
 SLOTS_DIR="${ASHIGARU_SLOTS_DIR:-/srv/ashigaru/slots}"
 CONFIG_DIR="${ASHIGARU_CONFIG_DIR:-/srv/ashigaru/config}"
 TEMPLATE="${CONFIG_DIR}/preview-rotv-template.env"
+HOST_PODMAN="${ASHIGARU_HOST_PODMAN:-unix:///run/host-podman/podman.sock}"
 MAX_SLOTS=5
 PROD_CONTAINER="rootsofthevalley.org"
+
+# All podman commands in this script use the host socket.
+hpodman() { CONTAINER_HOST="$HOST_PODMAN" podman "$@"; }
 
 # ---- helpers ----------------------------------------------------------------
 meta_get() {
@@ -60,7 +66,7 @@ for n in $(seq 1 $MAX_SLOTS); do
   fi
   # Check if the lock is stale (container not running)
   locked_container="$(python3 -c "import json; print(json.load(open('${lockfile}')).get('container',''))" 2>/dev/null)"
-  if [ -n "$locked_container" ] && ! podman inspect "$locked_container" >/dev/null 2>&1; then
+  if [ -n "$locked_container" ] && ! hpodman inspect "$locked_container" >/dev/null 2>&1; then
     rm -f "$lockfile"
     slot="development${n}"
     slot_num="$n"
@@ -92,8 +98,7 @@ meta_set "$meta" preview_url "\"${preview_url}\""
 echo "Building image from ${repodir} ..."
 image_tag="localhost/ashigaru-preview-${run_id}:latest"
 
-# Use the devrunner rootless socket for the build
-if ! CONTAINER_HOST="unix:///run/podman/podman.sock" podman build \
+if ! hpodman build \
     -t "$image_tag" "$repodir" \
     >> "${rundir}/preview.log" 2>&1; then
   echo "ERROR: image build failed (see ${rundir}/preview.log)"
@@ -105,12 +110,12 @@ fi
 echo "Image built: ${image_tag}"
 
 # ---- stop any existing container on this slot --------------------------------
-podman stop "$slot" 2>/dev/null
-podman rm -f "$slot" 2>/dev/null
+hpodman stop "$slot" 2>/dev/null
+hpodman rm -f "$slot" 2>/dev/null
 
 # ---- seed DB from production ------------------------------------------------
 echo "Seeding DB from ${PROD_CONTAINER} ..."
-if ! podman exec "$PROD_CONTAINER" pg_dump -U rotv rotv > "${slot_dir}/data/seed.sql" 2>>"${rundir}/preview.log"; then
+if ! hpodman exec "$PROD_CONTAINER" pg_dump -U rotv rotv > "${slot_dir}/data/seed.sql" 2>>"${rundir}/preview.log"; then
   echo "WARNING: prod DB dump failed; preview will start with empty DB"
 fi
 
@@ -119,7 +124,7 @@ sed "s|SLOT_NUM|${slot_num}|g" "$TEMPLATE" > "${slot_dir}/rotv.env"
 
 # ---- launch preview container -----------------------------------------------
 echo "Launching ${slot} on port ${port} ..."
-if ! podman run -d \
+if ! hpodman run -d \
     --systemd=always \
     --memory=2g --memory-swap=2g \
     --name "$slot" \
@@ -142,10 +147,10 @@ sleep 20
 
 if [ -s "${slot_dir}/data/seed.sql" ]; then
   echo "Restoring production DB seed ..."
-  podman exec "$slot" systemctl stop rotv-backend 2>>"${rundir}/preview.log" || true
-  podman exec "$slot" su - postgres -c "dropdb --if-exists rotv && createdb -O rotv rotv" 2>>"${rundir}/preview.log" || true
-  podman exec -i "$slot" psql -U rotv rotv < "${slot_dir}/data/seed.sql" >>"${rundir}/preview.log" 2>&1 || true
-  podman exec "$slot" systemctl start rotv-backend 2>>"${rundir}/preview.log" || true
+  hpodman exec "$slot" systemctl stop rotv-backend 2>>"${rundir}/preview.log" || true
+  hpodman exec "$slot" su - postgres -c "dropdb --if-exists rotv && createdb -O rotv rotv" 2>>"${rundir}/preview.log" || true
+  hpodman exec -i "$slot" psql -U rotv rotv < "${slot_dir}/data/seed.sql" >>"${rundir}/preview.log" 2>&1 || true
+  hpodman exec "$slot" systemctl start rotv-backend 2>>"${rundir}/preview.log" || true
   echo "DB seed restored"
   sleep 5
 fi

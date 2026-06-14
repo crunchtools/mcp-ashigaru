@@ -9,6 +9,9 @@ set -uo pipefail
 
 STATE_DIR="${ASHIGARU_STATE_DIR:-/home/devrunner/ashigaru}"
 SLOTS_DIR="${ASHIGARU_SLOTS_DIR:-/srv/ashigaru/slots}"
+HOST_PODMAN="${ASHIGARU_HOST_PODMAN:-unix:///run/host-podman/podman.sock}"
+
+hpodman() { CONTAINER_HOST="$HOST_PODMAN" podman "$@"; }
 
 meta_get() {
   python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$1" "$2"
@@ -29,11 +32,10 @@ image_tag="localhost/ashigaru-preview-${run_id}:latest"
 
 echo "Tearing down ${slot} for run ${run_id} ..."
 
-podman stop "$slot" 2>/dev/null || true
-podman rm -f "$slot" 2>/dev/null || true
+hpodman stop "$slot" 2>/dev/null || true
+hpodman rm -f "$slot" 2>/dev/null || true
 
-# Remove the built image (devrunner rootless)
-CONTAINER_HOST="unix:///run/podman/podman.sock" podman rmi "$image_tag" 2>/dev/null || true
+hpodman rmi "$image_tag" 2>/dev/null || true
 
 # Clear lock and slot data
 rm -f "${slot_dir}/lock.json"
