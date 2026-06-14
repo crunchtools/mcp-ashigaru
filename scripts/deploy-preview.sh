@@ -153,7 +153,7 @@ fi
 # ---- healthcheck ------------------------------------------------------------
 echo "Healthchecking http://127.0.0.1:${port}/ ..."
 healthy=false
-for i in $(seq 1 12); do
+for _try in $(seq 1 12); do
   if curl -sf "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
     healthy=true
     break

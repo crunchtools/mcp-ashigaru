@@ -23,6 +23,7 @@ set -uo pipefail
 STATE_DIR="${ASHIGARU_STATE_DIR:-/home/devrunner/ashigaru}"
 ORG="${ASHIGARU_ORG:-crunchtools}"
 AGENT_IMAGE="${ASHIGARU_AGENT_IMAGE:-localhost/rotv-dev-runner:latest}"
+# shellcheck disable=SC2034
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ -f "${HOME}/.config/dev-runner/claude.env" ]; then
@@ -225,8 +226,8 @@ if [ "${1:-}" = "--run" ]; then
 
   # Resolve the starting model to a tier
   case "$model" in
-    *sonnet*|sonnet) start_tier=1 ;;
-    *opus*|opus)     start_tier=2 ;;
+    *sonnet*) start_tier=1 ;;
+    *opus*)   start_tier=2 ;;
     *)               start_tier=1 ;;
   esac
   actual_model="$(tier_model "$start_tier")"
