@@ -324,6 +324,10 @@ if ! git clone --depth 50 \
   exit 0
 fi
 
+# The worker runs as UID 1000 (non-root for bypassPermissions). The clone is
+# root-owned; chown so the agent can actually write to the files.
+chown -R 1000:1000 "$repodir" "${rundir}"
+
 setsid bash "$0" --run "$run_id" "$repo" "$issue" "$branch" "$model" \
   >>"${rundir}/runner.log" 2>&1 </dev/null &
 disown
