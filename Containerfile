@@ -6,9 +6,18 @@
 # -mounted in (CONTAINER_HOST), so the wrapper scripts launch the *workers*
 # (Claude Code) rootless as devrunner — only the workers run rootless.
 #
-# Unlike the airlock image this is NOT distroless: the wrapper scripts need a
-# real shell plus git, gh, jq and a podman client. UBI-minimal carries a shell,
-# so shell-form RUN is fine here.
+# Base image: ubi10/ubi-minimal (NOT Hummingbird distroless) — evaluated in
+# issue #2. The wrapper scripts require bash, git, gh, jq, and podman-remote.
+# Both Hummingbird Python variants are worse for this runtime role:
+#
+#   hummingbird/python:latest         — distroless, no shell; scripts cannot run.
+#   hummingbird/python:latest-builder — ships the full build toolchain; larger
+#                                        image and higher CVE surface than
+#                                        ubi-minimal used as a pure runtime.
+#
+# ubi-minimal + microdnf installs exactly the runtime tools needed and nothing
+# more, and receives dnf CVE patches. It remains the correct base here.
+# Shell-form RUN is fine because ubi-minimal ships /bin/sh.
 #
 # Build (via GHA -> quay; never hand-pushed):
 #   podman build -t quay.io/crunchtools/mcp-ashigaru .
