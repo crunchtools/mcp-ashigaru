@@ -42,7 +42,7 @@ profiles, the merge-train, web previews).
 
 | Tool | Purpose |
 |------|---------|
-| `work_ticket(repo, issue)` | Start a run: clone `repo`, fix issue `#issue`, run the repo's gates, open a PR. Runs the **escalation ladder** internally (below). Returns a `run_id`. |
+| `work_ticket(repo, issue, brief, model)` | Start a run: clone `repo`, fix issue `#issue`, run the repo's gates, open a PR. `brief` is a maintainer-supplied summary of the issue (airlock-filtered; the sub-agent never reads the raw GitHub issue). `model` optionally pins the starting model tier. Runs the **escalation ladder** internally (below). Returns a `run_id`. |
 | `status(run_id)` | On-demand digest: phase, recent agent actions, which **model tier** the run reached, **live CI/build checks** for the PR, and the PR URL. This is what Kagetora answers from when you ask "what's the status of the builds?" |
 | `promote(pr, approval_token)` | **Gated.** Ship a reviewed PR to production via the repo's deploy path. Refuses without a human-approval marker — the coding agent never reaches it. |
 
