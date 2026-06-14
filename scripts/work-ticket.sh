@@ -31,6 +31,10 @@ if [ -f "${HOME}/.config/dev-runner/claude.env" ]; then
   set -a; . "${HOME}/.config/dev-runner/claude.env"; set +a
 fi
 
+# The clone is chowned to UID 1000 (for the worker) but git operations in
+# --run/--iterate run as root. Suppress the dubious-ownership check.
+git config --global --add safe.directory '*' 2>/dev/null || true
+
 # ---- model tier table -------------------------------------------------------
 # Tier 1: Sonnet (cheap first pass)
 # Tier 2: Opus (fed prior diff + gate failure)
