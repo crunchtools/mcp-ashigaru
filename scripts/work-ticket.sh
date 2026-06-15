@@ -143,11 +143,20 @@ if [ "${1:-}" = "--iterate" ]; then
   current_tier="${current_tier:-1}"
   repodir="${STATE_DIR}/work/${run_id}/${repo}"
 
-  next_tier=$((current_tier + 1))
-  if [ "$next_tier" -gt "$MAX_TIER" ]; then
-    set_phase "$rundir" escalated
-    echo "All ${MAX_TIER} tiers exhausted — escalating to human"
-    exit 0
+  # Human feedback (notes provided) = new direction, not a failure. Stay at the
+  # current tier. Only escalate when auto-retrying from a gate failure (no notes).
+  has_feedback=false
+  [ -s "${rundir}/feedback.txt" ] && has_feedback=true
+
+  if $has_feedback; then
+    next_tier="$current_tier"
+  else
+    next_tier=$((current_tier + 1))
+    if [ "$next_tier" -gt "$MAX_TIER" ]; then
+      set_phase "$rundir" escalated
+      echo "All ${MAX_TIER} tiers exhausted — escalating to human"
+      exit 0
+    fi
   fi
 
   model="$(tier_model "$next_tier")"
@@ -203,13 +212,7 @@ End with a short summary: what you fixed this iteration."
     fi
   else
     append_attempt "$rundir" "$next_tier" "$model" "failed" "$gate_result"
-    # Auto-escalate to next tier if not at max
-    if [ "$next_tier" -lt "$MAX_TIER" ]; then
-      exec bash "$0" --iterate "$run_id"
-    else
-      set_phase "$rundir" escalated
-      echo "All tiers exhausted after iteration — escalating to human"
-    fi
+    set_phase "$rundir" failed
   fi
   exit 0
 fi
@@ -260,27 +263,13 @@ End with a short summary: root cause + exactly what you changed."
   gate_result="$(check_gate "$repodir")"
   if [ "$gate_result" != "passed" ]; then
     append_attempt "$rundir" "$start_tier" "$actual_model" "failed" "$gate_result"
-    # Auto-escalate through remaining tiers
-    if [ "$start_tier" -lt "$MAX_TIER" ]; then
-      meta_set "$rundir" current_tier "$start_tier"
-      bash "$0" --iterate "$run_id"
-      # Re-check if iteration succeeded
-      phase="$(meta_get "${rundir}/meta.json" phase)"
-      if [ "$phase" != "awaiting-approval" ]; then
-        exit 0
-      fi
-    else
-      set_phase "$rundir" escalated
-      exit 0
-    fi
+    # No auto-escalation — the foreman decides whether to retry, escalate, or
+    # give feedback. Use request_changes(run_id, notes) to iterate, or pass
+    # model="opus" in a new work_ticket to start at a higher tier.
+    set_phase "$rundir" failed
+    exit 0
   else
     append_attempt "$rundir" "$start_tier" "$actual_model" "passed" ""
-  fi
-
-  # ---- Commit + PR (first time or after successful escalation) ---------------
-  phase="$(meta_get "${rundir}/meta.json" phase)"
-  if [ "$phase" = "escalated" ]; then
-    exit 0
   fi
 
   set_phase "$rundir" gating
