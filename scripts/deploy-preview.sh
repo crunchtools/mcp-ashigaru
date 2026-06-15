@@ -145,17 +145,29 @@ fi
 
 # ---- restore DB seed --------------------------------------------------------
 echo "Waiting for PostgreSQL to initialize ..."
-sleep 20
+# Wait for PostgreSQL to be ready (not just the container — PG itself)
+for _wait in $(seq 1 30); do
+  if hpodman exec "$slot" su - postgres -c "pg_isready" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+
+# Patch initDatabase to skip on seeded DBs (SKIP_INIT_DB=true in env).
+# This works around the ROTV FK constraint ordering bug on restored dumps.
+hpodman exec "$slot" sed -i 's/await initDatabase();/if (!process.env.SKIP_INIT_DB) await initDatabase();/' /app/server.js 2>>"${rundir}/preview.log" || true
+hpodman exec "$slot" systemctl stop rotv-backend 2>>"${rundir}/preview.log" || true
 
 if [ -s "${slot_dir}/data/seed.sql" ]; then
   echo "Restoring production DB seed ..."
-  hpodman exec "$slot" systemctl stop rotv-backend 2>>"${rundir}/preview.log" || true
-  hpodman exec "$slot" su - postgres -c "dropdb --if-exists rotv && createdb -O rotv rotv" 2>>"${rundir}/preview.log" || true
+  # Create the rotv role if it doesn't exist (seed.sql may or may not include it)
+  hpodman exec "$slot" su - postgres -c "createuser rotv 2>/dev/null; createdb -O rotv rotv 2>/dev/null" 2>>"${rundir}/preview.log" || true
   hpodman exec -i "$slot" psql -U rotv rotv < "${slot_dir}/data/seed.sql" >>"${rundir}/preview.log" 2>&1 || true
-  hpodman exec "$slot" systemctl start rotv-backend 2>>"${rundir}/preview.log" || true
   echo "DB seed restored"
-  sleep 5
 fi
+
+hpodman exec "$slot" systemctl start rotv-backend 2>>"${rundir}/preview.log" || true
+sleep 5
 
 # ---- healthcheck ------------------------------------------------------------
 echo "Healthchecking http://127.0.0.1:${port}/ ..."
