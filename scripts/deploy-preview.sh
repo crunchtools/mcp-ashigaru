@@ -99,7 +99,7 @@ meta_set "$meta" preview_url "\"${preview_url}\""
 echo "Building image from ${repodir} ..."
 image_tag="localhost/ashigaru-preview-${run_id}:latest"
 
-if ! hpodman build \
+if ! hpodman build --no-cache \
     --build-arg "BASE_IMAGE=${ROTV_BASE_IMAGE}" \
     -t "$image_tag" "$repodir" \
     >> "${rundir}/preview.log" 2>&1; then
