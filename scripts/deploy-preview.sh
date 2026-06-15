@@ -160,9 +160,11 @@ hpodman exec "$slot" systemctl stop rotv-backend 2>>"${rundir}/preview.log" || t
 
 if [ -s "${slot_dir}/data/seed.sql" ]; then
   echo "Restoring production DB seed ..."
-  # Create the rotv role if it doesn't exist (seed.sql may or may not include it)
-  hpodman exec "$slot" su - postgres -c "createuser rotv 2>/dev/null; createdb -O rotv rotv 2>/dev/null" 2>>"${rundir}/preview.log" || true
-  hpodman exec -i "$slot" psql -U rotv rotv < "${slot_dir}/data/seed.sql" >>"${rundir}/preview.log" 2>&1 || true
+  # Create role, DB, and PostGIS extension as postgres superuser.
+  # The pg_dump includes SET ROLE and extension commands that need superuser.
+  hpodman exec "$slot" su - postgres -c "createuser rotv 2>/dev/null; createdb -O rotv rotv 2>/dev/null; psql rotv -c 'CREATE EXTENSION IF NOT EXISTS postgis' 2>/dev/null" 2>>"${rundir}/preview.log" || true
+  # Restore as postgres (superuser) — the dump has SET ROLE statements
+  hpodman exec -i "$slot" su - postgres -c "psql rotv" < "${slot_dir}/data/seed.sql" >>"${rundir}/preview.log" 2>&1 || true
   echo "DB seed restored"
 fi
 
