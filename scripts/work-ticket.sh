@@ -194,8 +194,13 @@ End with a short summary: what you fixed this iteration."
     append_attempt "$rundir" "$next_tier" "$model" "passed" ""
     commit_and_push "$repodir" "$rundir" "$issue" "$branch" force
     set_phase "$rundir" awaiting-approval
-    # Clean up feedback file
     rm -f "${rundir}/feedback.txt"
+    # Rebuild preview if a slot is allocated
+    preview_slot="$(meta_get "$meta" preview_slot)"
+    if [ -n "$preview_slot" ] && [ "$preview_slot" != "None" ]; then
+      SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+      bash "${SCRIPT_DIR}/deploy-preview.sh" "$run_id" >>"${rundir}/preview.log" 2>&1 || true
+    fi
   else
     append_attempt "$rundir" "$next_tier" "$model" "failed" "$gate_result"
     # Auto-escalate to next tier if not at max
