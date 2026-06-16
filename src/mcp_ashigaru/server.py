@@ -29,6 +29,10 @@ from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
+from starlette.requests import Request  # noqa: TC002
+from starlette.responses import JSONResponse, PlainTextResponse
+
+from . import runs
 
 # Wrapper scripts are baked into the image (RUNNER_DIR). Per-run state — the repo
 # clone and the event stream — lives on a host volume (STATE_DIR) that is mounted
@@ -50,15 +54,16 @@ TEARDOWN_PREVIEW = RUNNER_DIR / "teardown-preview.sh"
 
 mcp = FastMCP(
     "mcp-ashigaru",
-    version="0.5.0",
+    version="0.6.0",
     instructions=(
         "Drive Claude Code as a headless dev sub-agent on the crunchtools fleet. "
         "work_ticket starts a run (clone repo, fix a GitHub issue, auto-escalate "
         "through model tiers, open a PR). deploy_preview launches a live webapp "
         "preview at development{N}.crunchtools.com. request_changes feeds back "
         "notes and re-invokes the worker on the same branch. status returns a "
-        "digest of a run. promote squash-merges a reviewed PR. teardown_preview "
-        "frees a preview slot."
+        "digest of a run. list_runs discovers all runs with optional filters. "
+        "run_events retrieves the event stream for a run. promote squash-merges "
+        "a reviewed PR. teardown_preview frees a preview slot."
     ),
 )
 
@@ -279,6 +284,88 @@ async def teardown_preview(run_id: str) -> dict[str, Any]:
     out, _ = await proc.communicate()
     ok = proc.returncode == 0
     return {"run_id": run_id, "freed": ok, "detail": (out.decode()[-300:] if out else "")}
+
+
+@mcp.tool()
+async def list_runs(
+    repo: str | None = None, status: str | None = None, limit: int = 50
+) -> dict[str, Any]:
+    """List all Ashigaru runs with optional filters. Returns summaries sorted
+    newest-first — use this to discover run_ids without knowing them in advance.
+
+    Args:
+        repo: filter to runs for this repo name (e.g. "rotv"). Optional.
+        status: filter to runs in this phase (e.g. "failed", "shipped"). Optional.
+        limit: max runs to return (default 50).
+    """
+    return {"runs": runs.list_all_runs(repo=repo, status=status, limit=limit)}
+
+
+@mcp.tool()
+async def run_events(run_id: str, tail: int = 200) -> dict[str, Any]:
+    """Get the event stream for a run — parsed tool_use actions with timestamps.
+    Use this to interrogate what an agent did during a run.
+
+    Args:
+        run_id: the run_id to inspect.
+        tail: max events to return from the end of the stream (default 200).
+    """
+    detail = runs.get_run_detail(run_id)
+    if detail is None:
+        return {"error": f"unknown run_id: {run_id}"}
+    events = runs.get_run_events(run_id, tail=tail)
+    return {
+        "run_id": run_id,
+        "repo": detail.get("repo"),
+        "issue": detail.get("issue"),
+        "phase": detail.get("phase"),
+        "event_count": detail.get("event_count", 0),
+        "events": events,
+    }
+
+
+# -- REST API (served on the same port via FastMCP custom_route) ---------------
+
+@mcp.custom_route("/api/runs", methods=["GET"])
+async def api_list_runs(request: Request) -> JSONResponse:
+    repo = request.query_params.get("repo")
+    phase = request.query_params.get("status")
+    try:
+        limit = int(request.query_params.get("limit", "50"))
+    except ValueError:
+        return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+    return JSONResponse(runs.list_all_runs(repo=repo, status=phase, limit=limit))
+
+
+@mcp.custom_route("/api/runs/{run_id}", methods=["GET"])
+async def api_run_detail(request: Request) -> JSONResponse:
+    run_id = request.path_params["run_id"]
+    detail = runs.get_run_detail(run_id)
+    if detail is None:
+        return JSONResponse({"error": f"unknown run_id: {run_id}"}, status_code=404)
+    return JSONResponse(detail)
+
+
+@mcp.custom_route("/api/runs/{run_id}/events", methods=["GET"])
+async def api_run_events(request: Request) -> JSONResponse:
+    run_id = request.path_params["run_id"]
+    try:
+        tail = int(request.query_params.get("tail", "200"))
+    except ValueError:
+        return JSONResponse({"error": "tail must be an integer"}, status_code=400)
+    detail = runs.get_run_detail(run_id)
+    if detail is None:
+        return JSONResponse({"error": f"unknown run_id: {run_id}"}, status_code=404)
+    return JSONResponse(runs.get_run_events(run_id, tail=tail))
+
+
+@mcp.custom_route("/api/runs/{run_id}/log", methods=["GET"])
+async def api_run_log(request: Request) -> PlainTextResponse:
+    run_id = request.path_params["run_id"]
+    detail = runs.get_run_detail(run_id)
+    if detail is None:
+        return PlainTextResponse(f"unknown run_id: {run_id}", status_code=404)
+    return PlainTextResponse(runs.get_run_log(run_id))
 
 
 def main() -> None:
