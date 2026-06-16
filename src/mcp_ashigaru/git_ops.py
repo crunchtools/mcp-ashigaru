@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 from pathlib import Path
 
@@ -22,12 +23,13 @@ async def _run(
     env: dict[str, str] | None = None,
     log_path: Path | None = None,
 ) -> tuple[int, str]:
+    merged_env = {**os.environ, **env} if env else None
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(cwd) if cwd else None,
-        env=env,
+        env=merged_env,
     )
     out, _ = await proc.communicate()
     output = out.decode() if out else ""
