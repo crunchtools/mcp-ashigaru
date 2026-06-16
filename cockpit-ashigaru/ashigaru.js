@@ -74,7 +74,7 @@
         var html = '<div class="pf-v6-c-page">' +
             '<main class="pf-v6-c-page__main">' +
             '<section class="pf-v6-c-page__main-section">' +
-            '<div class="pf-v6-c-content"><h1>Ashigaru Dev Runners</h1></div>' +
+            '<div class="pf-v6-c-content"><h1>Ashigaru Runners</h1></div>' +
             '</section>' +
             '<section class="pf-v6-c-page__main-section pf-m-light">' +
             '<div class="ashigaru-filter-bar">' +
