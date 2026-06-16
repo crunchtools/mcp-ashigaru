@@ -52,14 +52,22 @@ async def run_new(
     repodir = config.work_dir / run_id / repo
     log_path = state.run_dir / "setup.log"
 
-    state.set_phase(Phase.CLONING, f"Cloning {config.org}/{repo}")
-    if not await clone(repo, repodir, config, log_path):
-        state.set_phase(Phase.FAILED, "Git clone failed")
-        return
-
-    branch = f"fix/issue-{issue}"
-    await create_branch(repodir, branch)
-    state.update_meta(branch=branch)
+    # Clone if not already done by _clone_and_prepare in create_run
+    if not repodir.is_dir():
+        state.set_phase(Phase.CLONING, f"Cloning {config.org}/{repo}")
+        if not await clone(repo, repodir, config, log_path):
+            state.set_phase(Phase.FAILED, "Git clone failed")
+            return
+        branch = f"fix/issue-{issue}"
+        await create_branch(repodir, branch)
+        state.update_meta(branch=branch)
+    else:
+        # Wait briefly for _clone_and_prepare to finish branching
+        for _ in range(10):
+            meta_check = state.read_meta()
+            if meta_check.branch:
+                break
+            await asyncio.sleep(1)
 
     start_tier = resolve_tier(model_hint)
     actual_model = tier_model(start_tier)
