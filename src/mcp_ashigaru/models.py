@@ -21,6 +21,13 @@ class Phase(str, Enum):
     FAILED = "failed"
     ESCALATED = "escalated"
     CANCELLED = "cancelled"
+    # Legacy phases from v0.x — kept for backward compat with existing meta.json
+    EDITING = "editing"
+    GATING = "gating"
+    AWAITING_APPROVAL = "awaiting-approval"
+    ON_DEV = "on-dev"
+    DEPLOYING_PREVIEW = "deploying-preview"
+    PREPARING = "preparing"
 
 
 class Source(str, Enum):
