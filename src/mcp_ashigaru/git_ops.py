@@ -61,7 +61,9 @@ async def create_branch(repodir: Path, branch: str) -> bool:
 async def check_gate(repodir: Path) -> tuple[str, str]:
     rc, _ = await _run("git", "diff", "--quiet", cwd=repodir)
     rc2, _ = await _run("git", "diff", "--cached", "--quiet", cwd=repodir)
-    if rc == 0 and rc2 == 0:
+    _, untracked = await _run("git", "ls-files", "--others", "--exclude-standard", cwd=repodir)
+    has_changes = rc != 0 or rc2 != 0 or bool(untracked.strip())
+    if not has_changes:
         return "no-change", "No files modified"
     return "passed", ""
 
