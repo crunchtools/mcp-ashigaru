@@ -1,3 +1,14 @@
+#runs-table th,
+#runs-table td {
+    padding: 8px 16px;
+    text-align: left;
+}
+
+#runs-table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
 .ashigaru-run-row {
     cursor: pointer;
 }
