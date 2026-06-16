@@ -1,7 +1,6 @@
 (function () {
     "use strict";
 
-    var API_BASE = "http://localhost:8020";
     var refreshTimer = null;
 
     function apiGet(path) {
@@ -28,11 +27,22 @@
                '<span class="pf-v6-c-label__content">' + (phase || "unknown") + '</span></span>';
     }
 
+    function sourceBadge(source) {
+        return '<span class="ashigaru-source-badge">' + (source || "ashigaru") + '</span>';
+    }
+
     function formatTime(ts) {
         if (!ts) return "";
         var d = new Date(ts);
         if (isNaN(d.getTime())) return ts;
         return d.toLocaleString();
+    }
+
+    function formatTimeShort(ts) {
+        if (!ts) return "";
+        var d = new Date(ts);
+        if (isNaN(d.getTime())) return ts;
+        return d.toLocaleTimeString();
     }
 
     function truncate(s, max) {
@@ -50,47 +60,41 @@
     // ---- Run List View -------------------------------------------------------
 
     function renderListPage() {
+        var phases = [
+            "queued", "cloning", "analyzing", "implementing", "validating",
+            "building", "awaiting-review", "reviewing", "preview-live",
+            "shipped", "failed", "escalated", "cancelled",
+            "editing", "gating", "awaiting-approval", "on-dev"
+        ];
+        var phaseOptions = '<option value="">All phases</option>';
+        for (var p = 0; p < phases.length; p++) {
+            phaseOptions += '<option value="' + phases[p] + '">' + phases[p] + '</option>';
+        }
+
         var html = '<div class="pf-v6-c-page">' +
             '<main class="pf-v6-c-page__main">' +
-
             '<section class="pf-v6-c-page__main-section">' +
             '<div class="pf-v6-c-content"><h1>Ashigaru Dev Runners</h1></div>' +
             '</section>' +
-
             '<section class="pf-v6-c-page__main-section pf-m-light">' +
-
             '<div class="ashigaru-filter-bar">' +
             '<input type="text" id="filter-repo" placeholder="Filter by repo..." />' +
-            '<select id="filter-phase">' +
-            '<option value="">All phases</option>' +
-            '<option value="editing">editing</option>' +
-            '<option value="gating">gating</option>' +
-            '<option value="awaiting-approval">awaiting-approval</option>' +
-            '<option value="on-dev">on-dev</option>' +
-            '<option value="shipped">shipped</option>' +
-            '<option value="failed">failed</option>' +
-            '<option value="escalated">escalated</option>' +
-            '<option value="cloning">cloning</option>' +
-            '</select>' +
+            '<select id="filter-phase">' + phaseOptions + '</select>' +
             '<button class="pf-v6-c-button pf-m-secondary pf-m-small" id="btn-refresh">Refresh</button>' +
             '</div>' +
-
             '<table class="pf-v6-c-table pf-m-compact pf-m-grid-md" id="runs-table">' +
             '<thead><tr>' +
-            '<th>Run ID</th><th>Repo</th><th>Issue</th><th>Phase</th>' +
-            '<th>Tier</th><th>Attempts</th><th>PR</th><th>Created</th>' +
+            '<th>Title</th><th>Repo</th><th>Issue</th><th>Phase</th>' +
+            '<th>Source</th><th>Tier</th><th>PR</th><th>Created</th>' +
             '</tr></thead>' +
             '<tbody id="runs-tbody"><tr><td colspan="8">Loading...</td></tr></tbody>' +
             '</table>' +
-
             '</section></main></div>';
 
         document.body.innerHTML = html;
-
         document.getElementById("btn-refresh").addEventListener("click", loadRuns);
         document.getElementById("filter-repo").addEventListener("input", loadRuns);
         document.getElementById("filter-phase").addEventListener("change", loadRuns);
-
         loadRuns();
         startAutoRefresh();
     }
@@ -100,49 +104,45 @@
         var phase = document.getElementById("filter-phase").value;
         var params = [];
         if (repo) params.push("repo=" + encodeURIComponent(repo));
-        if (phase) params.push("status=" + encodeURIComponent(phase));
+        if (phase) params.push("phase=" + encodeURIComponent(phase));
         var path = "/api/runs" + (params.length ? "?" + params.join("&") : "");
 
         apiGet(path).then(function (data) {
             var tbody = document.getElementById("runs-tbody");
             if (!tbody) return;
-
             if (!data || data.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="8">No runs found</td></tr>';
                 return;
             }
-
             var html = "";
             for (var i = 0; i < data.length; i++) {
                 var r = data[i];
+                var titleDisplay = r.title || truncate(r.run_id, 30);
                 var prLink = r.pr_url
                     ? '<a href="' + escapeHtml(r.pr_url) + '" target="_blank">#' + r.pr_url.split("/").pop() + '</a>'
                     : "";
                 html += '<tr class="pf-v6-c-table__tr ashigaru-run-row" data-run-id="' + escapeHtml(r.run_id) + '">' +
-                    '<td class="pf-v6-c-table__td"><code>' + escapeHtml(truncate(r.run_id, 30)) + '</code></td>' +
+                    '<td class="pf-v6-c-table__td ashigaru-title-cell">' + escapeHtml(titleDisplay) + '</td>' +
                     '<td class="pf-v6-c-table__td">' + escapeHtml(r.repo || "") + '</td>' +
                     '<td class="pf-v6-c-table__td">#' + (r.issue || "") + '</td>' +
                     '<td class="pf-v6-c-table__td">' + phaseBadge(r.phase) + '</td>' +
+                    '<td class="pf-v6-c-table__td">' + sourceBadge(r.source) + '</td>' +
                     '<td class="pf-v6-c-table__td">' + (r.current_tier || "") + '</td>' +
-                    '<td class="pf-v6-c-table__td">' + (r.attempts || 0) + '</td>' +
                     '<td class="pf-v6-c-table__td">' + prLink + '</td>' +
                     '<td class="pf-v6-c-table__td">' + formatTime(r.created) + '</td>' +
                     '</tr>';
             }
             tbody.innerHTML = html;
-
             var rows = tbody.querySelectorAll(".ashigaru-run-row");
             for (var j = 0; j < rows.length; j++) {
                 rows[j].addEventListener("click", function () {
-                    var runId = this.dataset.runId;
                     stopAutoRefresh();
-                    renderDetailPage(runId);
+                    renderDetailPage(this.dataset.runId);
                 });
             }
         }).catch(function (err) {
             var tbody = document.getElementById("runs-tbody");
-            if (tbody)
-                tbody.innerHTML = '<tr><td colspan="8">Error loading runs: ' + escapeHtml(String(err)) + '</td></tr>';
+            if (tbody) tbody.innerHTML = '<tr><td colspan="8">Error: ' + escapeHtml(String(err)) + '</td></tr>';
         });
     }
 
@@ -164,32 +164,36 @@
         document.body.innerHTML = '<div class="pf-v6-c-page"><main class="pf-v6-c-page__main">' +
             '<section class="pf-v6-c-page__main-section">' +
             '<div class="ashigaru-back-btn" id="btn-back">&larr; Back to runs</div>' +
-            '<div class="pf-v6-c-content"><h1>Run: <code>' + escapeHtml(runId) + '</code></h1></div>' +
+            '<div id="detail-header"><p>Loading...</p></div>' +
             '</section>' +
             '<section class="pf-v6-c-page__main-section pf-m-light" id="detail-content">' +
-            '<p>Loading...</p>' +
             '</section></main></div>';
 
-        document.getElementById("btn-back").addEventListener("click", function () {
-            renderListPage();
-        });
+        document.getElementById("btn-back").addEventListener("click", renderListPage);
 
         Promise.all([
             apiGet("/api/runs/" + encodeURIComponent(runId)),
-            apiGet("/api/runs/" + encodeURIComponent(runId) + "/events?tail=100"),
+            apiGet("/api/runs/" + encodeURIComponent(runId) + "/activity?tail=50"),
             apiGetText("/api/runs/" + encodeURIComponent(runId) + "/log")
         ]).then(function (results) {
-            var detail = results[0];
-            var events = results[1];
-            var log = results[2];
-            renderDetailContent(detail, events, log);
+            renderDetailContent(results[0], results[1], results[2]);
         }).catch(function (err) {
             var el = document.getElementById("detail-content");
             if (el) el.innerHTML = '<p>Error: ' + escapeHtml(String(err)) + '</p>';
         });
     }
 
-    function renderDetailContent(detail, events, log) {
+    function renderDetailContent(detail, activity, log) {
+        var header = document.getElementById("detail-header");
+        if (header) {
+            var title = detail.title || detail.run_id;
+            header.innerHTML = '<div class="pf-v6-c-content">' +
+                '<h1>' + escapeHtml(title) + '</h1>' +
+                '<p>' + escapeHtml(detail.repo) + ' #' + detail.issue +
+                ' &mdash; ' + phaseBadge(detail.phase) + ' ' + sourceBadge(detail.source) + '</p>' +
+                '</div>';
+        }
+
         var el = document.getElementById("detail-content");
         if (!el) return;
 
@@ -198,20 +202,22 @@
         // -- Metadata card --
         html += '<div class="pf-v6-l-grid__item pf-m-12-col pf-m-6-col-on-lg">' +
             '<div class="pf-v6-c-card"><div class="pf-v6-c-card__header"><div class="pf-v6-c-card__header-main">Metadata</div></div>' +
-            '<div class="pf-v6-c-card__body">' +
-            '<dl class="pf-v6-c-description-list pf-m-horizontal">';
+            '<div class="pf-v6-c-card__body"><dl class="pf-v6-c-description-list pf-m-horizontal">';
 
         var fields = [
-            ["Repo", detail.repo],
-            ["Issue", "#" + detail.issue],
-            ["Phase", detail.phase],
+            ["Run ID", '<code>' + escapeHtml(detail.run_id) + '</code>'],
+            ["Branch", detail.branch],
             ["Model", detail.model],
-            ["Current Tier", detail.current_tier],
+            ["Tier", detail.current_tier],
             ["Created", formatTime(detail.created)],
+            ["Updated", formatTime(detail.updated)],
             ["Events", detail.event_count],
             ["PR", detail.pr_url ? '<a href="' + escapeHtml(detail.pr_url) + '" target="_blank">' + escapeHtml(detail.pr_url) + '</a>' : "none"],
             ["Preview", detail.preview_url ? '<a href="' + escapeHtml(detail.preview_url) + '" target="_blank">' + escapeHtml(detail.preview_url) + '</a>' : "none"]
         ];
+        if (detail.failure_reason) {
+            fields.push(["Failure", '<span style="color:#c9190b">' + escapeHtml(detail.failure_reason) + '</span>']);
+        }
 
         for (var i = 0; i < fields.length; i++) {
             html += '<div class="pf-v6-c-description-list__group">' +
@@ -225,22 +231,44 @@
         if (attempts.length > 0) {
             html += '<div class="pf-v6-l-grid__item pf-m-12-col pf-m-6-col-on-lg">' +
                 '<div class="pf-v6-c-card"><div class="pf-v6-c-card__header"><div class="pf-v6-c-card__header-main">Attempts (' + attempts.length + ')</div></div>' +
-                '<div class="pf-v6-c-card__body">' +
-                '<table class="pf-v6-c-table pf-m-compact"><thead><tr>' +
+                '<div class="pf-v6-c-card__body"><table class="pf-v6-c-table pf-m-compact"><thead><tr>' +
                 '<th>Tier</th><th>Model</th><th>Gate</th><th>Output</th>' +
                 '</tr></thead><tbody>';
             for (var a = 0; a < attempts.length; a++) {
                 var att = attempts[a];
                 var gateCls = att.gate === "passed" ? "ashigaru-attempt-passed" : "ashigaru-attempt-failed";
-                html += '<tr>' +
-                    '<td>' + (att.tier || "") + '</td>' +
+                html += '<tr><td>' + (att.tier || "") + '</td>' +
                     '<td><code>' + escapeHtml(att.model || "") + '</code></td>' +
                     '<td class="' + gateCls + '">' + (att.gate || "") + '</td>' +
-                    '<td>' + escapeHtml(truncate(att.gate_output || "", 80)) + '</td>' +
-                    '</tr>';
+                    '<td>' + escapeHtml(truncate(att.gate_output || "", 80)) + '</td></tr>';
             }
             html += '</tbody></table></div></div></div>';
         }
+
+        // -- Activity timeline card --
+        html += '<div class="pf-v6-l-grid__item pf-m-12-col">' +
+            '<div class="pf-v6-c-card"><div class="pf-v6-c-card__header"><div class="pf-v6-c-card__header-main">Activity Timeline (' + (activity ? activity.length : 0) + ')</div></div>' +
+            '<div class="pf-v6-c-card__body">';
+
+        if (activity && activity.length > 0) {
+            html += '<table class="pf-v6-c-table pf-m-compact"><thead><tr>' +
+                '<th>Time</th><th>Kind</th><th>Summary</th><th>Files</th>' +
+                '</tr></thead><tbody>';
+            for (var t = 0; t < activity.length; t++) {
+                var act = activity[t];
+                var filesStr = (act.files || []).map(function (f) { return escapeHtml(f); }).join(", ");
+                html += '<tr>' +
+                    '<td>' + formatTimeShort(act.timestamp) + '</td>' +
+                    '<td><span class="ashigaru-activity-kind">' + escapeHtml(act.kind || "") + '</span></td>' +
+                    '<td>' + escapeHtml(act.summary || "") + '</td>' +
+                    '<td class="ashigaru-event-preview">' + filesStr + '</td>' +
+                    '</tr>';
+            }
+            html += '</tbody></table>';
+        } else {
+            html += '<p>No activity recorded</p>';
+        }
+        html += '</div></div></div>';
 
         // -- Brief card --
         if (detail.brief) {
@@ -248,31 +276,6 @@
                 '<div class="pf-v6-c-card"><div class="pf-v6-c-card__header"><div class="pf-v6-c-card__header-main">Brief</div></div>' +
                 '<div class="pf-v6-c-card__body"><pre class="ashigaru-log-pre">' + escapeHtml(detail.brief) + '</pre></div></div></div>';
         }
-
-        // -- Events card --
-        html += '<div class="pf-v6-l-grid__item pf-m-12-col">' +
-            '<div class="pf-v6-c-card"><div class="pf-v6-c-card__header"><div class="pf-v6-c-card__header-main">Agent Actions (' + (events ? events.length : 0) + ')</div></div>' +
-            '<div class="pf-v6-c-card__body">';
-
-        if (events && events.length > 0) {
-            html += '<table class="pf-v6-c-table pf-m-compact"><thead><tr>' +
-                '<th>#</th><th>Tool</th><th>Input</th>' +
-                '</tr></thead><tbody>';
-            for (var e = 0; e < events.length; e++) {
-                var ev = events[e];
-                var toolCls = ev.tool === "__result__" ? "" : "ashigaru-event-tool";
-                html += '<tr>' +
-                    '<td>' + (e + 1) + '</td>' +
-                    '<td class="' + toolCls + '">' + escapeHtml(ev.tool || "") + '</td>' +
-                    '<td class="ashigaru-event-preview" title="' + escapeHtml(ev.input_preview || "") + '">' +
-                    escapeHtml(truncate(ev.input_preview || "", 120)) + '</td>' +
-                    '</tr>';
-            }
-            html += '</tbody></table>';
-        } else {
-            html += '<p>No events recorded</p>';
-        }
-        html += '</div></div></div>';
 
         // -- Log card --
         if (log && log.trim()) {
