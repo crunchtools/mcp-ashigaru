@@ -1,377 +1,549 @@
-"""mcp-ashigaru — lets Kagetora drive Claude Code as a headless dev sub-agent.
+"""mcp-ashigaru v1.0.0 — the CrunchTools dev-ops backbone.
 
-This is the always-on bridge between Kagetora (the foreman) and the deterministic
-wrapper scripts that do the real work. On lotor it runs like every other MCP
-server: a root-managed system container on the `crunchtools` network, reachable
-by Kagetora through the airlock gateway (added as a backend in the kagetora
-profile). The unprivileged `devrunner` user's rootless podman socket is bind
--mounted in, so the wrapper scripts launch the *workers* (Claude Code) rootless
-as devrunner — only the workers run rootless, never this surface.
+Single source of truth for all feature development across all agents. Josui
+(desktop) and Kagetora (phone) compose these tools to drive features from
+ticket to production. Cross-agent handoff is seamless — the run_id is the
+shared handle; any agent can pick up at any phase.
 
-Design invariants (mirror the security model of the sandbox):
-  - The LLM-facing surface is THIN. These tools take a repo + issue number and
-    return status; they do not let the caller run arbitrary commands.
-  - The privileged work (git/gh, podman gates, prod deploy) lives in the
-    deterministic wrapper scripts, NOT here and NOT in the coding agent.
-  - `promote` is trust-based (no token): it squash-merges a reviewed PR on the
-    maintainer's Signal instruction, relying on airlock-filtered content and a
-    revertable merge rather than an out-of-band token the agent would hold.
+14 MCP tools: 10 lifecycle (write), 4 read-only.
+REST API on the same port (8020) for Cockpit and external callers.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
-import os
 import re
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
 from fastmcp import FastMCP
-from starlette.requests import Request  # noqa: TC002
+from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 
-from . import runs
-
-# Wrapper scripts are baked into the image (RUNNER_DIR). Per-run state — the repo
-# clone and the event stream — lives on a host volume (STATE_DIR) that is mounted
-# at the SAME path here and is visible to devrunner's rootless podman, so the
-# worker containers can bind-mount the clone. (A `-v` issued over the mounted
-# socket is resolved host-side, not inside this container — hence the shared path.)
-RUNNER_DIR = Path(os.environ.get("ASHIGARU_RUNNER_DIR", "/app/scripts"))
-STATE_DIR = Path(os.environ.get("ASHIGARU_STATE_DIR", "/home/devrunner/ashigaru"))
-RUNS_DIR = STATE_DIR / "runs"
-WRAPPER = RUNNER_DIR / "work-ticket.sh"
+from . import preview as preview_mod
+from . import review as review_mod
+from . import runner
+from .config import Config
+from .git_ops import commit_and_push, merge_pr
+from .models import Activity, ActivityKind, Phase, RunMeta, Source
+from .slots import SlotManager
+from .state import RunState
 
 REPO_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
-
-# Default streamable-http port for the lotor systemd unit (see Containerfile).
 DEFAULT_PORT = 8020
 
-DEPLOY_PREVIEW = RUNNER_DIR / "deploy-preview.sh"
-TEARDOWN_PREVIEW = RUNNER_DIR / "teardown-preview.sh"
+CFG = Config()
 
 mcp = FastMCP(
     "mcp-ashigaru",
-    version="0.6.0",
+    version="1.0.0",
     instructions=(
-        "Drive Claude Code as a headless dev sub-agent on the crunchtools fleet. "
-        "work_ticket starts a run (clone repo, fix a GitHub issue, auto-escalate "
-        "through model tiers, open a PR). deploy_preview launches a live webapp "
-        "preview at development{N}.crunchtools.com. request_changes feeds back "
-        "notes and re-invokes the worker on the same branch. status returns a "
-        "digest of a run. list_runs discovers all runs with optional filters. "
-        "run_events retrieves the event stream for a run. promote squash-merges "
-        "a reviewed PR. teardown_preview frees a preview slot."
+        "CrunchTools dev-ops backbone. Any agent (Josui, Kagetora) composes "
+        "these tools to drive features from ticket to production. All state "
+        "lives here — the run_id is the cross-agent handoff token. "
+        "Tools: create_run, dispatch_worker, run_build, create_pr, "
+        "deploy_preview, request_changes, run_review, promote, "
+        "teardown_preview, cancel_run, status, list_runs, run_activity, run_log."
     ),
 )
 
 
-def _digest(run_id: str) -> dict[str, Any]:
-    """Summarize a run's persisted event stream into a phone-readable digest."""
-    if not re.fullmatch(r"[a-z0-9-]{1,64}", run_id):
-        raise ValueError("invalid run_id")
-    d = RUNS_DIR / run_id
-    meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
-    events_path = d / "events.jsonl"
-    phase = meta.get("phase", "unknown")
-    pr_url = meta.get("pr_url")
-    last_actions: list[str] = []
-    is_error = None
-    if events_path.exists():
-        for line in events_path.read_text().splitlines():
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if e.get("type") == "assistant":
-                for b in e.get("message", {}).get("content", []):
-                    if b.get("type") == "tool_use":
-                        last_actions.append(b.get("name", ""))
-            elif e.get("type") == "result":
-                is_error = e.get("is_error")
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _strip_org(repo: str) -> str:
+    return repo.rsplit("/", 1)[-1] if "/" in repo else repo
+
+
+# =============================================================================
+# LIFECYCLE TOOLS (write)
+# =============================================================================
+
+
+@mcp.tool()
+async def create_run(
+    repo: str,
+    issue: int,
+    title: str,
+    brief: str = "",
+    source: str = "ashigaru",
+    change_type: str = "fix",
+) -> dict[str, Any]:
+    """Register a new run and clone the repo. Returns run_id + project context.
+    The title is the human-readable name (e.g. "Trail filtering for news page")
+    — this is what agents display to Scott, not the run_id.
+
+    Args:
+        repo: repo name; accepts "rotv" or "crunchtools/rotv" (org is stripped).
+        issue: GitHub issue number.
+        title: human-readable name for this run (typically the issue title).
+        brief: the filtered issue text / task description. Optional for external runs.
+        source: who created this run — "ashigaru", "josui", "kagetora", "external".
+        change_type: "fix", "feat", or "refactor" (used for branch naming).
+    """
+    repo = _strip_org(repo)
+    if not REPO_RE.match(repo):
+        return {"error": f"invalid repo name: {repo!r}"}
+
+    run_id = f"{repo}-{issue}-{int(datetime.now(UTC).timestamp())}"
+    branch = f"{change_type}/issue-{issue}"
+
+    src = Source.EXTERNAL
+    for s in Source:
+        if s.value == source:
+            src = s
+            break
+
+    meta = RunMeta(
+        run_id=run_id,
+        repo=repo,
+        issue=issue,
+        title=title,
+        branch=branch,
+        phase=Phase.QUEUED,
+        source=src,
+        created=_now(),
+    )
+    state = RunState.create(meta, CFG)
+
+    if brief:
+        state.write_brief(brief)
+
+    asyncio.create_task(_clone_and_prepare(run_id, repo, CFG))
+
     return {
         "run_id": run_id,
-        "repo": meta.get("repo"),
-        "issue": meta.get("issue"),
-        "phase": phase,
-        "recent_actions": last_actions[-6:],
-        "gate": meta.get("gate"),
-        "pr_url": pr_url,
-        "preview_url": meta.get("preview_url"),
-        "preview_slot": meta.get("preview_slot"),
-        "current_tier": meta.get("current_tier"),
-        "attempts": meta.get("attempts", []),
-        "agent_error": is_error,
+        "title": title,
+        "repo": repo,
+        "issue": issue,
+        "branch": branch,
+        "phase": Phase.QUEUED.value,
+    }
+
+
+async def _clone_and_prepare(run_id: str, repo: str, config: Config) -> None:
+    state = RunState.load(run_id, config)
+    if state is None:
+        return
+    from .git_ops import clone, create_branch
+
+    state.set_phase(Phase.CLONING, f"Cloning {config.org}/{repo}")
+    repodir = config.work_dir / run_id / repo
+    if not await clone(repo, repodir, config, state.run_dir / "setup.log"):
+        state.set_phase(Phase.FAILED, "Git clone failed")
+        return
+    meta = state.read_meta()
+    await create_branch(repodir, meta.branch)
+    state.activity.append(Activity(
+        timestamp=_now(), kind=ActivityKind.GIT_OP,
+        summary=f"Cloned and branched: {meta.branch}",
+    ))
+
+
+@mcp.tool()
+async def dispatch_worker(
+    run_id: str,
+    prompt: str = "",
+    model: str = "",
+) -> dict[str, Any]:
+    """Run a sealed Claude Code agent in the background on the cloned repo.
+    The concurrent event classifier updates sub-phases in real-time so
+    status() reflects what the agent is doing (analyzing/implementing/validating).
+
+    Args:
+        run_id: the run_id from create_run.
+        prompt: override the default prompt. If empty, uses the brief from create_run.
+        model: starting model tier hint (e.g. "sonnet", "opus"). Default: sonnet.
+    """
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return {"error": f"unknown run_id: {run_id}"}
+
+    meta = state.read_meta()
+    brief = prompt or state.read_brief()
+    if not brief:
+        return {"error": "no prompt or brief available for this run"}
+
+    model_hint = model or CFG.default_model
+    asyncio.create_task(runner.run_new(run_id, meta.repo, meta.issue, brief, model_hint, CFG))
+
+    return {
+        "run_id": run_id,
+        "title": meta.title,
+        "status": "dispatched",
+        "model": model_hint,
     }
 
 
 @mcp.tool()
-async def work_ticket(
-    repo: str, issue: int, brief: str, model: str | None = None
+async def run_build(
+    run_id: str,
+    command: str = "",
 ) -> dict[str, Any]:
-    """Start a dev run: clone <repo>, fix GitHub issue #<issue> from the provided
-    brief, run the repo's quality gates, and open a draft PR. Returns a run_id
-    immediately; the run continues in the background. Poll status(run_id).
-
-    The issue text MUST be passed as `brief` — already airlock-filtered (fetched
-    via mcp-github through the gateway). This server never reads the GitHub issue
-    directly, and the sealed, network-isolated sub-agent only ever sees `brief`.
+    """Execute the project's build gate and return pass/fail + output.
 
     Args:
-        repo: repo name; accepts "rotv" or "crunchtools/rotv" (org is stripped).
-        issue: GitHub issue number (used for branch naming / labeling only).
-        brief: the filtered issue text / task description for the agent to work.
-        model: optional starting model tier (e.g. "sonnet", "opus"). Sonnet->Opus
-            escalation is handled internally; this only sets the starting point.
+        run_id: the run_id to build.
+        command: custom build command. If empty, echoes that no gate is configured.
     """
-    if "/" in repo:
-        repo = repo.rsplit("/", 1)[-1]
-    if not REPO_RE.match(repo):
-        return {"error": f"invalid repo name: {repo!r}"}
-    if issue <= 0:
-        return {"error": "issue must be a positive integer"}
-    if not brief or not brief.strip():
-        return {"error": "brief is required (the filtered issue text for the agent)"}
-    # The wrapper mints the run_id, sets up runs/<id>/, and detaches the agent.
-    args = ["bash", str(WRAPPER), repo, str(issue), brief]
-    if model:
-        args.append(model)
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return {"error": f"unknown run_id: {run_id}"}
+
+    meta = state.read_meta()
+    repodir = CFG.work_dir / run_id / meta.repo
+    state.set_phase(Phase.BUILDING, "Running build gate")
+
+    cmd = command or "echo 'no build gate configured'"
     proc = await asyncio.create_subprocess_exec(
-        *args,
+        "bash", "-c", cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        cwd=str(repodir),
     )
     out, _ = await proc.communicate()
-    run_id = out.decode().strip().splitlines()[-1] if out else ""
-    if not run_id:
-        return {"error": "wrapper did not return a run_id", "raw": out.decode()[-300:]}
-    return {"run_id": run_id, "repo": repo, "issue": issue, "status": "started"}
+    output = out.decode()[-3000:] if out else ""
+    passed = proc.returncode == 0
+
+    state.activity.append(Activity(
+        timestamp=_now(), kind=ActivityKind.GATE_CHECK,
+        summary=f"Build gate: {'passed' if passed else 'FAILED'}",
+        detail=output[-500:],
+    ))
+
+    return {
+        "run_id": run_id,
+        "passed": passed,
+        "exit_code": proc.returncode,
+        "output": output,
+    }
 
 
 @mcp.tool()
-async def status(run_id: str) -> dict[str, Any]:
-    """Return an on-demand digest of a run: current phase, recent agent actions,
-    gate result, and PR URL. This is what Kagetora answers from when you ask
-    "what's the runner doing?"."""
-    try:
-        return _digest(run_id)
-    except (ValueError, FileNotFoundError) as exc:
-        return {"error": str(exc)}
-
-
-@mcp.tool()
-async def promote(repo: str, pr: int) -> dict[str, Any]:
-    """Promote a reviewed PR to production by merging it (squash merge).
-
-    Trust-based — there is NO approval token. Promotion is authorized by you, the
-    foreman, acting on the maintainer's Signal instruction; the content you reason
-    over is airlock-filtered. Confirm the PR is clear first with
-    get_pull_request_checks (remember: skipped != failed). The merge is the
-    promotion — the repo's GHA pipeline builds and ships from the default branch.
+async def create_pr(
+    run_id: str,
+    pr_title: str = "",
+    body: str = "",
+) -> dict[str, Any]:
+    """Commit all changes, push branch, and create a draft PR on GitHub.
 
     Args:
-        repo: repo name; accepts "rotv" or "crunchtools/rotv" (org is stripped).
-        pr: pull request number to merge.
+        run_id: the run_id to create a PR for.
+        pr_title: PR title. If empty, generates from run metadata.
+        body: PR body. If empty, generates from run metadata.
     """
-    if "/" in repo:
-        repo = repo.rsplit("/", 1)[-1]
-    if not REPO_RE.match(repo):
-        return {"error": f"invalid repo name: {repo!r}"}
-    if pr <= 0:
-        return {"error": "pr must be a positive integer"}
-    proc = await asyncio.create_subprocess_exec(
-        "bash", str(RUNNER_DIR / "promote.sh"), repo, str(pr),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return {"error": f"unknown run_id: {run_id}"}
+
+    meta = state.read_meta()
+    repodir = CFG.work_dir / run_id / meta.repo
+    log_path = state.run_dir / "setup.log"
+
+    pushed = await commit_and_push(repodir, meta.issue, meta.branch, CFG, log_path)
+    if not pushed:
+        return {"error": "push failed", "run_id": run_id}
+
+    from .git_ops import _run, get_default_branch
+
+    base = await get_default_branch(meta.repo, CFG)
+    final_title = pr_title or f"{meta.branch.split('/')[0]}: {meta.title} (#{meta.issue})"
+    final_body = body or (
+        f"Closes #{meta.issue}.\n\n"
+        f"Run: `{run_id}` (source: {meta.source.value})\n"
+        f"Model: {meta.model or 'interactive'}, tier {meta.current_tier}"
     )
-    out, _ = await proc.communicate()
-    ok = proc.returncode == 0
-    return {"repo": repo, "pr": pr, "promoted": ok, "detail": out.decode()[-500:]}
+
+    env = {"GH_TOKEN": CFG.gh_token}
+    rc, out = await _run(
+        "gh", "pr", "create", "--draft",
+        "-R", f"{CFG.org}/{meta.repo}",
+        "--base", base, "--head", meta.branch,
+        "--title", final_title,
+        "--body", final_body,
+        env=env, log_path=log_path,
+    )
+    pr_url = out.strip().splitlines()[-1] if rc == 0 and out.strip() else None
+
+    if pr_url:
+        state.update_meta(pr_url=pr_url)
+        state.activity.append(Activity(
+            timestamp=_now(), kind=ActivityKind.GIT_OP,
+            summary=f"PR created: {pr_url}",
+        ))
+    state.set_phase(Phase.AWAITING_REVIEW, f"PR: {pr_url or 'creation failed'}")
+
+    return {"run_id": run_id, "pr_url": pr_url, "title": final_title}
 
 
 @mcp.tool()
 async def deploy_preview(run_id: str) -> dict[str, Any]:
-    """Launch an ephemeral webapp preview for a completed run. Builds the image
-    from the PR branch code, seeds the DB from production, and routes
-    development{N}.crunchtools.com to it. Returns the preview URL immediately;
-    the build+seed runs in the background — poll status(run_id) for phase
-    changes (deploying-preview → on-dev).
+    """Build and launch a webapp preview from the PR branch. Returns the
+    preview URL (correct domain per repo config — e.g. rootsofthevalley.org
+    for ROTV, crunchtools.com for others).
 
     Args:
-        run_id: the run_id from a prior work_ticket call.
+        run_id: the run_id from a prior create_run call.
     """
-    if not re.fullmatch(r"[a-z0-9-]{1,64}", run_id):
-        return {"error": "invalid run_id"}
-    rundir = RUNS_DIR / run_id
-    if not (rundir / "meta.json").exists():
-        return {"error": f"unknown run_id: {run_id}"}
-    proc = await asyncio.create_subprocess_exec(
-        "bash", str(DEPLOY_PREVIEW), run_id,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    out, _ = await proc.communicate()
-    output = out.decode()[-500:] if out else ""
-    ok = proc.returncode == 0
-    meta = json.loads((rundir / "meta.json").read_text())
-    return {
-        "run_id": run_id,
-        "deployed": ok,
-        "preview_url": meta.get("preview_url"),
-        "preview_slot": meta.get("preview_slot"),
-        "detail": output,
-    }
+    return await preview_mod.deploy(run_id, CFG)
 
 
 @mcp.tool()
 async def request_changes(run_id: str, notes: str = "") -> dict[str, Any]:
-    """Feed back changes to a completed or failed run. Re-invokes the sealed
-    worker on the existing branch with the feedback (notes + prior gate failure),
-    escalating to the next model tier. If notes are empty, auto-escalates from
-    the gate failure alone.
-
-    For webapp-profile runs, the preview is rebuilt after the iteration succeeds.
-    Returns immediately; poll status(run_id) for progress.
+    """Re-invoke the worker with feedback + prior gate failure. Escalates
+    model tier unless human notes are provided (notes = new direction, not
+    failure). Iterate until satisfied, then promote.
 
     Args:
-        run_id: the run_id from a prior work_ticket call.
+        run_id: the run_id to iterate on.
         notes: feedback from the foreman (what to fix / change). Optional.
     """
-    if not re.fullmatch(r"[a-z0-9-]{1,64}", run_id):
-        return {"error": "invalid run_id"}
-    rundir = RUNS_DIR / run_id
-    if not (rundir / "meta.json").exists():
+    state = RunState.load(run_id, CFG)
+    if state is None:
         return {"error": f"unknown run_id: {run_id}"}
-    args = ["bash", str(WRAPPER), "--iterate", run_id]
-    if notes and notes.strip():
-        (rundir / "feedback.txt").write_text(notes.strip())
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    out, _ = await proc.communicate()
-    output = out.decode()[-300:] if out else ""
-    meta = json.loads((rundir / "meta.json").read_text())
+
+    if notes:
+        state.write_feedback(notes)
+
+    meta = state.read_meta()
+    asyncio.create_task(runner.run_iterate(run_id, notes, CFG))
+
     return {
         "run_id": run_id,
-        "status": meta.get("phase", "unknown"),
-        "current_tier": meta.get("current_tier"),
-        "detail": output,
+        "title": meta.title,
+        "status": "iterating",
+        "current_tier": meta.current_tier,
     }
+
+
+@mcp.tool()
+async def run_review(run_id: str) -> dict[str, Any]:
+    """Execute Gatehouse code review (or recommend Gemini Pro fallback).
+
+    Args:
+        run_id: the run_id to review.
+    """
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return {"error": f"unknown run_id: {run_id}"}
+    state.set_phase(Phase.REVIEWING, "Code review in progress")
+    return await review_mod.run_review(run_id, CFG)
+
+
+@mcp.tool()
+async def promote(run_id: str) -> dict[str, Any]:
+    """Merge the PR (squash), teardown any preview, ship to production.
+    Trust-based — authorized by the foreman on the maintainer's instruction.
+
+    Args:
+        run_id: the run_id to promote.
+    """
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return {"error": f"unknown run_id: {run_id}"}
+
+    meta = state.read_meta()
+    if not meta.pr_url:
+        return {"error": "no PR URL — create a PR first", "run_id": run_id}
+
+    pr_num = meta.pr_url.rstrip("/").rsplit("/", 1)[-1]
+    ok, detail = await merge_pr(meta.repo, int(pr_num), CFG)
+
+    if ok:
+        await preview_mod.teardown(run_id, CFG)
+        state.set_phase(Phase.SHIPPED, f"PR #{pr_num} merged and shipped")
+    else:
+        state.activity.append(Activity(
+            timestamp=_now(), kind=ActivityKind.ERROR,
+            summary=f"Promote failed: {detail[:200]}",
+        ))
+
+    return {"run_id": run_id, "promoted": ok, "detail": detail[-500:]}
 
 
 @mcp.tool()
 async def teardown_preview(run_id: str) -> dict[str, Any]:
-    """Stop and clean up a preview slot. Frees the development{N} slot for reuse.
-    Called automatically by promote, but can also be called manually.
+    """Free a preview slot without promoting. Use to reclaim slots.
 
     Args:
         run_id: the run_id whose preview to tear down.
     """
-    if not re.fullmatch(r"[a-z0-9-]{1,64}", run_id):
-        return {"error": "invalid run_id"}
-    rundir = RUNS_DIR / run_id
-    if not (rundir / "meta.json").exists():
+    return await preview_mod.teardown(run_id, CFG)
+
+
+@mcp.tool()
+async def cancel_run(run_id: str, reason: str = "") -> dict[str, Any]:
+    """Cancel an active run. Frees any preview slot.
+
+    Args:
+        run_id: the run_id to cancel.
+        reason: optional reason for cancellation.
+    """
+    state = RunState.load(run_id, CFG)
+    if state is None:
         return {"error": f"unknown run_id: {run_id}"}
-    proc = await asyncio.create_subprocess_exec(
-        "bash", str(TEARDOWN_PREVIEW), run_id,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    out, _ = await proc.communicate()
-    ok = proc.returncode == 0
-    return {"run_id": run_id, "freed": ok, "detail": (out.decode()[-300:] if out else "")}
+
+    await preview_mod.teardown(run_id, CFG)
+    state.set_phase(Phase.CANCELLED, reason or "Cancelled by foreman")
+    return {"run_id": run_id, "cancelled": True}
+
+
+# =============================================================================
+# READ-ONLY TOOLS
+# =============================================================================
+
+
+@mcp.tool()
+async def status(run_id: str) -> dict[str, Any]:
+    """On-demand digest of a run: title, phase, latest activity, PR URL,
+    preview URL, attempt history. Designed for phone-readable output.
+    Agents should display the title prominently (e.g. "Trail filtering
+    for news page (rotv #473) — implementing").
+
+    Args:
+        run_id: the run_id to inspect.
+    """
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return {"error": f"unknown run_id: {run_id}"}
+    meta = state.read_meta()
+    recent = state.activity.latest(5)
+    return {
+        "run_id": run_id,
+        "title": meta.title,
+        "repo": meta.repo,
+        "issue": meta.issue,
+        "phase": meta.phase.value,
+        "source": meta.source.value,
+        "current_tier": meta.current_tier,
+        "model": meta.model,
+        "pr_url": meta.pr_url,
+        "preview_url": meta.preview_url,
+        "attempts": [a.model_dump() for a in meta.attempts],
+        "recent_activity": recent,
+        "failure_reason": meta.failure_reason,
+    }
 
 
 @mcp.tool()
 async def list_runs(
-    repo: str | None = None, status: str | None = None, limit: int = 50
+    repo: str | None = None,
+    phase: str | None = None,
+    source: str | None = None,
+    limit: int = 50,
 ) -> dict[str, Any]:
-    """List all Ashigaru runs with optional filters. Returns summaries sorted
-    newest-first — use this to discover run_ids without knowing them in advance.
+    """List all runs with optional filters, newest-first. Agents display the
+    title field prominently so Scott recognizes the work at a glance.
 
     Args:
-        repo: filter to runs for this repo name (e.g. "rotv"). Optional.
-        status: filter to runs in this phase (e.g. "failed", "shipped"). Optional.
+        repo: filter by repo name. Optional.
+        phase: filter by phase. Optional.
+        source: filter by source ("ashigaru", "external"). Optional.
         limit: max runs to return (default 50).
     """
-    return {"runs": runs.list_all_runs(repo=repo, status=status, limit=limit)}
+    return {"runs": RunState.list_all(CFG, repo=repo, phase=phase, source=source, limit=limit)}
 
 
 @mcp.tool()
-async def run_events(run_id: str, tail: int = 200) -> dict[str, Any]:
-    """Get the event stream for a run — parsed tool_use actions with timestamps.
-    Use this to interrogate what an agent did during a run.
+async def run_activity(run_id: str, tail: int = 50) -> dict[str, Any]:
+    """Structured activity log — what the agent (or human) did, in
+    human-readable form. Use this to understand the full story of a run.
 
     Args:
         run_id: the run_id to inspect.
-        tail: max events to return from the end of the stream (default 200).
+        tail: max entries to return from the end (default 50).
     """
-    detail = runs.get_run_detail(run_id)
-    if detail is None:
+    state = RunState.load(run_id, CFG)
+    if state is None:
         return {"error": f"unknown run_id: {run_id}"}
-    events = runs.get_run_events(run_id, tail=tail)
+    meta = state.read_meta()
     return {
         "run_id": run_id,
-        "repo": detail.get("repo"),
-        "issue": detail.get("issue"),
-        "phase": detail.get("phase"),
-        "event_count": detail.get("event_count", 0),
-        "events": events,
+        "title": meta.title,
+        "phase": meta.phase.value,
+        "activity": state.activity.query(tail=tail),
     }
 
 
-# -- REST API (served on the same port via FastMCP custom_route) ---------------
+@mcp.tool()
+async def run_log(run_id: str, log_name: str | None = None) -> dict[str, Any]:
+    """Raw log content for debugging.
+
+    Args:
+        run_id: the run_id to inspect.
+        log_name: specific log (agent.err, setup.log, runner.log, preview.log).
+                  If None, returns combined.
+    """
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return {"error": f"unknown run_id: {run_id}"}
+    return {"run_id": run_id, "log": state.get_log(log_name)}
+
+
+# =============================================================================
+# REST API
+# =============================================================================
+
 
 @mcp.custom_route("/api/runs", methods=["GET"])
 async def api_list_runs(request: Request) -> JSONResponse:
     repo = request.query_params.get("repo")
-    phase = request.query_params.get("status")
+    phase = request.query_params.get("phase")
+    source = request.query_params.get("source")
     try:
         limit = int(request.query_params.get("limit", "50"))
     except ValueError:
         return JSONResponse({"error": "limit must be an integer"}, status_code=400)
-    return JSONResponse(runs.list_all_runs(repo=repo, status=phase, limit=limit))
+    return JSONResponse(RunState.list_all(CFG, repo=repo, phase=phase, source=source, limit=limit))
 
 
 @mcp.custom_route("/api/runs/{run_id}", methods=["GET"])
 async def api_run_detail(request: Request) -> JSONResponse:
     run_id = request.path_params["run_id"]
-    detail = runs.get_run_detail(run_id)
-    if detail is None:
+    state = RunState.load(run_id, CFG)
+    if state is None:
         return JSONResponse({"error": f"unknown run_id: {run_id}"}, status_code=404)
-    return JSONResponse(detail)
+    return JSONResponse(state.get_detail())
 
 
-@mcp.custom_route("/api/runs/{run_id}/events", methods=["GET"])
-async def api_run_events(request: Request) -> JSONResponse:
+@mcp.custom_route("/api/runs/{run_id}/activity", methods=["GET"])
+async def api_run_activity(request: Request) -> JSONResponse:
     run_id = request.path_params["run_id"]
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return JSONResponse({"error": f"unknown run_id: {run_id}"}, status_code=404)
     try:
-        tail = int(request.query_params.get("tail", "200"))
+        tail = int(request.query_params.get("tail", "50"))
     except ValueError:
         return JSONResponse({"error": "tail must be an integer"}, status_code=400)
-    detail = runs.get_run_detail(run_id)
-    if detail is None:
-        return JSONResponse({"error": f"unknown run_id: {run_id}"}, status_code=404)
-    return JSONResponse(runs.get_run_events(run_id, tail=tail))
+    return JSONResponse(state.activity.query(tail=tail))
 
 
 @mcp.custom_route("/api/runs/{run_id}/log", methods=["GET"])
 async def api_run_log(request: Request) -> PlainTextResponse:
     run_id = request.path_params["run_id"]
-    detail = runs.get_run_detail(run_id)
-    if detail is None:
+    state = RunState.load(run_id, CFG)
+    if state is None:
         return PlainTextResponse(f"unknown run_id: {run_id}", status_code=404)
-    return PlainTextResponse(runs.get_run_log(run_id))
+    log_name = request.query_params.get("name")
+    return PlainTextResponse(state.get_log(log_name))
+
+
+@mcp.custom_route("/api/slots", methods=["GET"])
+async def api_slots(_request: Request) -> JSONResponse:
+    mgr = SlotManager(CFG)
+    return JSONResponse(mgr.list_all())
+
+
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
 
 
 def main() -> None:
-    """Entry point. Default stdio; the lotor systemd unit runs streamable-http:8020
-    on the crunchtools network so the airlock gateway can reach it."""
-    parser = argparse.ArgumentParser(description="MCP server for the Ashigaru dev runners")
+    parser = argparse.ArgumentParser(description="Ashigaru dev-ops backbone MCP server")
     parser.add_argument(
         "--transport", choices=["stdio", "sse", "streamable-http"], default="stdio"
     )
