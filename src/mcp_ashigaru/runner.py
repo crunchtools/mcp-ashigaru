@@ -112,21 +112,26 @@ async def run_new(
         gate="passed", started_at=_now(),
     ))
 
-    state.set_phase(Phase.AWAITING_REVIEW, "Pushing and creating PR")
-    await commit_and_push(repodir, issue, branch, config, log_path)
+    pushed = await commit_and_push(repodir, issue, branch, config, log_path, force=True)
+    if not pushed:
+        state.set_phase(Phase.FAILED, "git push failed")
+        return
 
     base = await get_default_branch(repo, config)
     pr_url = await create_pr(
         repo, branch, base, issue, run_id, actual_model,
         start_tier, config, log_path,
     )
-    if pr_url:
-        state.update_meta(pr_url=pr_url)
-        state.activity.append(Activity(
-            timestamp=_now(), kind=ActivityKind.GIT_OP,
-            summary=f"PR created: {pr_url}",
-        ))
-    state.set_phase(Phase.AWAITING_REVIEW, f"PR ready: {pr_url or 'creation failed'}")
+    if not pr_url:
+        state.set_phase(Phase.FAILED, "PR creation failed")
+        return
+
+    state.update_meta(pr_url=pr_url)
+    state.activity.append(Activity(
+        timestamp=_now(), kind=ActivityKind.GIT_OP,
+        summary=f"PR created: {pr_url}",
+    ))
+    state.set_phase(Phase.AWAITING_REVIEW, f"PR ready: {pr_url}")
 
 
 async def run_iterate(
