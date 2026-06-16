@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -44,7 +45,7 @@ class SlotManager:
             "podman", "inspect", container,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
-            env={"CONTAINER_HOST": self._config.host_podman},
+            env={**os.environ, "CONTAINER_HOST": self._config.host_podman},
         )
         await proc.wait()
         return proc.returncode == 0
@@ -109,13 +110,13 @@ class SlotManager:
         return True
 
     async def _teardown_container(self, container: str) -> None:
-        env = {"CONTAINER_HOST": self._config.host_podman}
+        merged_env = {**os.environ, "CONTAINER_HOST": self._config.host_podman}
         for cmd in (["podman", "stop", container], ["podman", "rm", "-f", container]):
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
-                env=env,
+                env=merged_env,
             )
             await proc.wait()
 

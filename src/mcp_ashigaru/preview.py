@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,12 +22,12 @@ def _now() -> str:
 async def _hpodman(
     config: Config, *args: str, log_path: Path | None = None,
 ) -> tuple[int, str]:
-    env = {"CONTAINER_HOST": config.host_podman}
+    merged_env = {**os.environ, "CONTAINER_HOST": config.host_podman}
     proc = await asyncio.create_subprocess_exec(
         "podman", *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        env=env,
+        env=merged_env,
     )
     out, _ = await proc.communicate()
     output = out.decode() if out else ""
