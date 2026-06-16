@@ -64,12 +64,12 @@ class RunMeta(BaseModel):
     run_id: str
     repo: str
     issue: int
-    title: str
+    title: str = ""
     branch: str = ""
     phase: Phase = Phase.QUEUED
     source: Source = Source.ASHIGARU
     model: str = ""
-    current_tier: int = 1
+    current_tier: int | None = 1
     pr_url: str | None = None
     preview_url: str | None = None
     preview_slot: int | None = None
