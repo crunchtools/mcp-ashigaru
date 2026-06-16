@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from pathlib import Path
 
 from .config import Config
+
+# The ashigaru container runs as root but clones are chowned to 1000 (devrunner)
+# for the worker containers. Suppress git's dubious-ownership check.
+subprocess.run(
+    ["git", "config", "--global", "--add", "safe.directory", "*"],
+    capture_output=True, check=False,
+)
 
 
 async def _run(
