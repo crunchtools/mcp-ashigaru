@@ -6,40 +6,57 @@
     background: var(--pf-v6-global--BackgroundColor--200, #f0f0f0);
 }
 
-.ashigaru-phase-editing {
+/* Work phases (blue) */
+.ashigaru-phase-analyzing,
+.ashigaru-phase-implementing,
+.ashigaru-phase-validating {
     background: var(--pf-v6-global--palette--blue-100, #e7f1fa);
     color: var(--pf-v6-global--palette--blue-500, #0066cc);
 }
 
-.ashigaru-phase-gating,
-.ashigaru-phase-awaiting-approval {
+/* Gate/review phases (gold) */
+.ashigaru-phase-building,
+.ashigaru-phase-awaiting-review,
+.ashigaru-phase-reviewing {
     background: var(--pf-v6-global--palette--gold-100, #fdf7e7);
     color: var(--pf-v6-global--palette--gold-500, #795600);
 }
 
+/* Success phases (green) */
 .ashigaru-phase-shipped,
-.ashigaru-phase-on-dev {
+.ashigaru-phase-preview-live {
     background: var(--pf-v6-global--palette--green-100, #e9f5e9);
     color: var(--pf-v6-global--palette--green-500, #3e8635);
 }
 
+/* Failure phases (red) */
 .ashigaru-phase-failed,
-.ashigaru-phase-escalated {
+.ashigaru-phase-escalated,
+.ashigaru-phase-cancelled {
     background: var(--pf-v6-global--palette--red-100, #faeaea);
     color: var(--pf-v6-global--palette--red-500, #c9190b);
 }
 
-.ashigaru-phase-cloning,
-.ashigaru-phase-deploying-preview {
+/* Setup phases (purple) */
+.ashigaru-phase-queued,
+.ashigaru-phase-cloning {
     background: var(--pf-v6-global--palette--purple-100, #f2e6f9);
     color: var(--pf-v6-global--palette--purple-500, #6753ac);
 }
+
+/* Legacy phases (backward compat) */
+.ashigaru-phase-editing { background: #e7f1fa; color: #0066cc; }
+.ashigaru-phase-gating { background: #fdf7e7; color: #795600; }
+.ashigaru-phase-awaiting-approval { background: #fdf7e7; color: #795600; }
+.ashigaru-phase-on-dev { background: #e9f5e9; color: #3e8635; }
+.ashigaru-phase-deploying-preview { background: #f2e6f9; color: #6753ac; }
 
 .ashigaru-filter-bar {
     display: flex;
     gap: 16px;
     margin-bottom: 16px;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .ashigaru-filter-bar input,
@@ -98,4 +115,23 @@
     white-space: pre-wrap;
     word-break: break-all;
     border-radius: 3px;
+}
+
+.ashigaru-activity-kind {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.7;
+}
+
+.ashigaru-source-badge {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--pf-v6-global--BackgroundColor--200, #f0f0f0);
+    color: var(--pf-v6-global--Color--200, #6a6e73);
+}
+
+.ashigaru-title-cell {
+    font-weight: 600;
 }
