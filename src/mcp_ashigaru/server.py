@@ -71,18 +71,8 @@ async def create_run(
     source: str = "ashigaru",
     change_type: str = "fix",
 ) -> dict[str, Any]:
-    """Register a new run and clone the repo. Returns run_id + project context.
-    The title is the human-readable name (e.g. "Trail filtering for news page")
-    — this is what agents display to Scott, not the run_id.
-
-    Args:
-        repo: repo name; accepts "rotv" or "crunchtools/rotv" (org is stripped).
-        issue: GitHub issue number.
-        title: human-readable name for this run (typically the issue title).
-        brief: the filtered issue text / task description. Optional for external runs.
-        source: who created this run — "ashigaru", "josui", "kagetora", "external".
-        change_type: "fix", "feat", or "refactor" (used for branch naming).
-    """
+    """Register a new run, clone the repo, create a branch. Returns run_id.
+    Use get_prompt("feature_workflow") for the full playbook."""
     repo = _strip_org(repo)
     if not REPO_RE.match(repo):
         return {"error": f"invalid repo name: {repo!r}"}
@@ -148,15 +138,8 @@ async def dispatch_worker(
     prompt: str = "",
     model: str = "",
 ) -> dict[str, Any]:
-    """Run a sealed Claude Code agent in the background on the cloned repo.
-    The concurrent event classifier updates sub-phases in real-time so
-    status() reflects what the agent is doing (analyzing/implementing/validating).
-
-    Args:
-        run_id: the run_id from create_run.
-        prompt: override the default prompt. If empty, uses the brief from create_run.
-        model: starting model tier hint (e.g. "sonnet", "opus"). Default: sonnet.
-    """
+    """Dispatch a sealed Claude Code agent in the background. Sub-phases
+    update in real-time (analyzing/implementing/validating)."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -182,12 +165,7 @@ async def run_build(
     run_id: str,
     command: str = "",
 ) -> dict[str, Any]:
-    """Execute the project's build gate and return pass/fail + output.
-
-    Args:
-        run_id: the run_id to build.
-        command: custom build command. If empty, echoes that no gate is configured.
-    """
+    """Run a build/lint/test gate. Returns pass/fail + output."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -227,13 +205,7 @@ async def create_pr(
     pr_title: str = "",
     body: str = "",
 ) -> dict[str, Any]:
-    """Commit all changes, push branch, and create a draft PR on GitHub.
-
-    Args:
-        run_id: the run_id to create a PR for.
-        pr_title: PR title. If empty, generates from run metadata.
-        body: PR body. If empty, generates from run metadata.
-    """
+    """Commit, push, and open a draft PR. Returns pr_url."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -280,26 +252,13 @@ async def create_pr(
 
 @mcp.tool()
 async def deploy_preview(run_id: str) -> dict[str, Any]:
-    """Build and launch a webapp preview from the PR branch. Returns the
-    preview URL (correct domain per repo config — e.g. rootsofthevalley.org
-    for ROTV, crunchtools.com for others).
-
-    Args:
-        run_id: the run_id from a prior create_run call.
-    """
+    """Build and launch a webapp preview. Returns preview_url (correct domain per repo)."""
     return await preview_mod.deploy(run_id, CFG)
 
 
 @mcp.tool()
 async def request_changes(run_id: str, notes: str = "") -> dict[str, Any]:
-    """Re-invoke the worker with feedback + prior gate failure. Escalates
-    model tier unless human notes are provided (notes = new direction, not
-    failure). Iterate until satisfied, then promote.
-
-    Args:
-        run_id: the run_id to iterate on.
-        notes: feedback from the foreman (what to fix / change). Optional.
-    """
+    """Re-invoke worker with feedback. Escalates model tier unless notes provided."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -320,11 +279,7 @@ async def request_changes(run_id: str, notes: str = "") -> dict[str, Any]:
 
 @mcp.tool()
 async def run_review(run_id: str) -> dict[str, Any]:
-    """Execute Gatehouse code review (or recommend Gemini Pro fallback).
-
-    Args:
-        run_id: the run_id to review.
-    """
+    """Run Gatehouse code review. Falls back to Gemini Pro recommendation."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -334,12 +289,7 @@ async def run_review(run_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def promote(run_id: str) -> dict[str, Any]:
-    """Merge the PR (squash), teardown any preview, ship to production.
-    Trust-based — authorized by the foreman on the maintainer's instruction.
-
-    Args:
-        run_id: the run_id to promote.
-    """
+    """Squash-merge the PR, teardown preview, ship. Trust-based promotion."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -365,22 +315,13 @@ async def promote(run_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def teardown_preview(run_id: str) -> dict[str, Any]:
-    """Free a preview slot without promoting. Use to reclaim slots.
-
-    Args:
-        run_id: the run_id whose preview to tear down.
-    """
+    """Free a preview slot without promoting."""
     return await preview_mod.teardown(run_id, CFG)
 
 
 @mcp.tool()
 async def cancel_run(run_id: str, reason: str = "") -> dict[str, Any]:
-    """Cancel an active run. Frees any preview slot.
-
-    Args:
-        run_id: the run_id to cancel.
-        reason: optional reason for cancellation.
-    """
+    """Cancel a run and free any preview slot."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -397,14 +338,7 @@ async def cancel_run(run_id: str, reason: str = "") -> dict[str, Any]:
 
 @mcp.tool()
 async def status(run_id: str) -> dict[str, Any]:
-    """On-demand digest of a run: title, phase, latest activity, PR URL,
-    preview URL, attempt history. Designed for phone-readable output.
-    Agents should display the title prominently (e.g. "Trail filtering
-    for news page (rotv #473) — implementing").
-
-    Args:
-        run_id: the run_id to inspect.
-    """
+    """Phone-readable digest: title, phase, latest activity, PR/preview URLs."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -434,27 +368,13 @@ async def list_runs(
     source: str | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """List all runs with optional filters, newest-first. Agents display the
-    title field prominently so Scott recognizes the work at a glance.
-
-    Args:
-        repo: filter by repo name. Optional.
-        phase: filter by phase. Optional.
-        source: filter by source ("ashigaru", "external"). Optional.
-        limit: max runs to return (default 50).
-    """
+    """List runs newest-first. Title field is the human-readable name."""
     return {"runs": RunState.list_all(CFG, repo=repo, phase=phase, source=source, limit=limit)}
 
 
 @mcp.tool()
 async def run_activity(run_id: str, tail: int = 50) -> dict[str, Any]:
-    """Structured activity log — what the agent (or human) did, in
-    human-readable form. Use this to understand the full story of a run.
-
-    Args:
-        run_id: the run_id to inspect.
-        tail: max entries to return from the end (default 50).
-    """
+    """Structured activity log — the full story of a run in human-readable form."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -469,13 +389,7 @@ async def run_activity(run_id: str, tail: int = 50) -> dict[str, Any]:
 
 @mcp.tool()
 async def run_log(run_id: str, log_name: str | None = None) -> dict[str, Any]:
-    """Raw log content for debugging.
-
-    Args:
-        run_id: the run_id to inspect.
-        log_name: specific log (agent.err, setup.log, runner.log, preview.log).
-                  If None, returns combined.
-    """
+    """Raw log content (agent.err, setup.log, runner.log, preview.log, or combined)."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
