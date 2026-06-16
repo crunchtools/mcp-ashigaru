@@ -48,7 +48,25 @@ async def run_new(
     state = RunState.load(run_id, config)
     if state is None:
         return
+    try:
+        await _run_new_inner(state, run_id, repo, issue, brief, model_hint, config)
+    except Exception as exc:
+        state.set_phase(Phase.FAILED, f"Runner crash: {exc}")
+        state.activity.append(Activity(
+            timestamp=_now(), kind=ActivityKind.ERROR,
+            summary=f"Runner crash: {exc}",
+        ))
 
+
+async def _run_new_inner(
+    state: RunState,
+    run_id: str,
+    repo: str,
+    issue: int,
+    brief: str,
+    model_hint: str,
+    config: Config,
+) -> None:
     repodir = config.work_dir / run_id / repo
     log_path = state.run_dir / "setup.log"
 
@@ -58,16 +76,20 @@ async def run_new(
         if not await clone(repo, repodir, config, log_path):
             state.set_phase(Phase.FAILED, "Git clone failed")
             return
-        branch = f"fix/issue-{issue}"
-        await create_branch(repodir, branch)
-        state.update_meta(branch=branch)
+        meta = state.read_meta()
+        if not meta.branch:
+            branch = f"fix/issue-{issue}"
+            await create_branch(repodir, branch)
+            state.update_meta(branch=branch)
     else:
-        # Wait briefly for _clone_and_prepare to finish branching
         for _ in range(10):
             meta_check = state.read_meta()
             if meta_check.branch:
                 break
             await asyncio.sleep(1)
+
+    meta = state.read_meta()
+    branch = meta.branch
 
     start_tier = resolve_tier(model_hint)
     actual_model = tier_model(start_tier)
@@ -77,7 +99,6 @@ async def run_new(
     state.set_phase(Phase.ANALYZING, f"Agent starting (tier {start_tier}, {actual_model})")
     state.update_meta(model=actual_model, current_tier=start_tier)
 
-    # Run agent and classify events concurrently
     classifier = asyncio.create_task(
         _classify_events_live(state, state.run_dir / "events.jsonl")
     )
@@ -143,7 +164,22 @@ async def run_iterate(
     state = RunState.load(run_id, config)
     if state is None:
         return
+    try:
+        await _run_iterate_inner(state, run_id, notes, config)
+    except Exception as exc:
+        state.set_phase(Phase.FAILED, f"Runner crash: {exc}")
+        state.activity.append(Activity(
+            timestamp=_now(), kind=ActivityKind.ERROR,
+            summary=f"Runner crash: {exc}",
+        ))
 
+
+async def _run_iterate_inner(
+    state: RunState,
+    run_id: str,
+    notes: str,
+    config: Config,
+) -> None:
     meta = state.read_meta()
     repo = meta.repo
     branch = meta.branch
