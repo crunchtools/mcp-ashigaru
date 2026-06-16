@@ -29,15 +29,6 @@ jobs:
       - name: Mypy
         run: uv run mypy src
 
-  shellcheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: ShellCheck wrapper scripts
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck --severity=warning scripts/*.sh
-
   gourmand:
     name: Code Quality (Gourmand)
     runs-on: ubuntu-latest

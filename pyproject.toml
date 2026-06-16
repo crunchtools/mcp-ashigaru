@@ -1,7 +1,7 @@
 [project]
 name = "mcp-ashigaru-crunchtools"
-version = "0.6.0"
-description = "MCP bridge that dispatches Claude Code as headless dev sub-agents (the Ashigaru corps under Kagetora)"
+version = "1.0.0"
+description = "CrunchTools dev-ops backbone — drives features from ticket to production across all agents"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
 authors = [
@@ -20,6 +20,7 @@ classifiers = [
 ]
 dependencies = [
     "fastmcp>=2.0",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +55,11 @@ ignore = [
     "TID252",   # relative imports in package ok
     "S603",     # subprocess calls are deterministic wrappers, not user input
     "S607",     # launching bash/podman by name is intentional
+    "TC001",    # runtime imports flagged as type-only (Config, etc.)
+    "TC002",    # runtime imports flagged as type-only (starlette)
+    "TC003",    # runtime imports flagged as type-only (Path, etc.)
+    "PLC0415",  # deferred imports for circular dep avoidance
+    "RUF006",   # fire-and-forget tasks are intentional (background runners)
 ]
 
 [tool.ruff.lint.pylint]
