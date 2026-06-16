@@ -1,0 +1,101 @@
+.ashigaru-run-row {
+    cursor: pointer;
+}
+
+.ashigaru-run-row:hover {
+    background: var(--pf-v6-global--BackgroundColor--200, #f0f0f0);
+}
+
+.ashigaru-phase-editing {
+    background: var(--pf-v6-global--palette--blue-100, #e7f1fa);
+    color: var(--pf-v6-global--palette--blue-500, #0066cc);
+}
+
+.ashigaru-phase-gating,
+.ashigaru-phase-awaiting-approval {
+    background: var(--pf-v6-global--palette--gold-100, #fdf7e7);
+    color: var(--pf-v6-global--palette--gold-500, #795600);
+}
+
+.ashigaru-phase-shipped,
+.ashigaru-phase-on-dev {
+    background: var(--pf-v6-global--palette--green-100, #e9f5e9);
+    color: var(--pf-v6-global--palette--green-500, #3e8635);
+}
+
+.ashigaru-phase-failed,
+.ashigaru-phase-escalated {
+    background: var(--pf-v6-global--palette--red-100, #faeaea);
+    color: var(--pf-v6-global--palette--red-500, #c9190b);
+}
+
+.ashigaru-phase-cloning,
+.ashigaru-phase-deploying-preview {
+    background: var(--pf-v6-global--palette--purple-100, #f2e6f9);
+    color: var(--pf-v6-global--palette--purple-500, #6753ac);
+}
+
+.ashigaru-filter-bar {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+    align-items: center;
+}
+
+.ashigaru-filter-bar input,
+.ashigaru-filter-bar select {
+    padding: 6px 12px;
+    border: 1px solid var(--pf-v6-global--BorderColor--100, #d2d2d2);
+    border-radius: 3px;
+    font-size: 14px;
+}
+
+.ashigaru-back-btn {
+    cursor: pointer;
+    margin-bottom: 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--pf-v6-global--link--Color, #0066cc);
+    font-size: 14px;
+}
+
+.ashigaru-back-btn:hover {
+    text-decoration: underline;
+}
+
+.ashigaru-event-tool {
+    font-family: var(--pf-v6-global--FontFamily--monospace, monospace);
+    font-size: 13px;
+}
+
+.ashigaru-event-preview {
+    max-width: 500px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--pf-v6-global--Color--200, #6a6e73);
+}
+
+.ashigaru-attempt-passed {
+    color: var(--pf-v6-global--palette--green-500, #3e8635);
+    font-weight: 600;
+}
+
+.ashigaru-attempt-failed {
+    color: var(--pf-v6-global--palette--red-500, #c9190b);
+    font-weight: 600;
+}
+
+.ashigaru-log-pre {
+    max-height: 400px;
+    overflow-y: auto;
+    background: var(--pf-v6-global--BackgroundColor--200, #f0f0f0);
+    padding: 12px;
+    font-family: var(--pf-v6-global--FontFamily--monospace, monospace);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    border-radius: 3px;
+}
