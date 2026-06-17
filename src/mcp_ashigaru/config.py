@@ -38,6 +38,9 @@ class Config:
     default_model: str = field(default_factory=lambda: os.environ.get(
         "ANTHROPIC_MODEL", "claude-sonnet-4-6"
     ))
+    notify_cmd: str = field(default_factory=lambda: os.environ.get(
+        "ASHIGARU_NOTIFY_CMD", ""
+    ))
 
     @property
     def runs_dir(self) -> Path:
