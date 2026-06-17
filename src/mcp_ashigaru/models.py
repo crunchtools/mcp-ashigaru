@@ -30,6 +30,12 @@ class Phase(str, Enum):
     PREPARING = "preparing"
 
 
+TERMINAL_PHASES: frozenset[str] = frozenset({
+    "awaiting-review", "failed", "escalated", "shipped", "cancelled",
+})
+ACTIVE_PHASES: frozenset[str] = frozenset(p.value for p in Phase) - TERMINAL_PHASES
+
+
 class Source(str, Enum):
     ASHIGARU = "ashigaru"
     EXTERNAL = "external"

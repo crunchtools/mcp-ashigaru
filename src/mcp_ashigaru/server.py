@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import re
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +27,7 @@ from . import review as review_mod
 from . import runner
 from .config import Config
 from .git_ops import commit_and_push, merge_pr
+from .heartbeat import heartbeat_loop
 from .models import Activity, ActivityKind, Phase, RunMeta, Source
 from .slots import SlotManager
 from .state import RunState
@@ -35,9 +37,24 @@ DEFAULT_PORT = 8020
 
 CFG = Config()
 
+
+@asynccontextmanager
+async def _lifespan(app: object):
+    task = asyncio.create_task(heartbeat_loop(CFG))
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
 mcp = FastMCP(
     "mcp-ashigaru",
     version="1.0.0",
+    lifespan=_lifespan,
     instructions=(
         "CrunchTools dev-ops backbone. Any agent (Josui, Kagetora) composes "
         "these tools to drive features from ticket to production. All state "
