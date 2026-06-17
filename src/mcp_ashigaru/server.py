@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import re
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -39,16 +39,14 @@ CFG = Config()
 
 
 @asynccontextmanager
-async def _lifespan(app: object):
+async def _lifespan(_app: object):
     task = asyncio.create_task(heartbeat_loop(CFG))
     try:
         yield
     finally:
         task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
 
 mcp = FastMCP(

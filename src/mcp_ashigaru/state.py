@@ -9,10 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import notify
 from .activity import ActivityLog
 from .config import Config
 from .models import Activity, ActivityKind, Attempt, Phase, RunMeta
-from . import notify
 
 RUNID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,99}")
 LOG_FILES = ("agent.err", "setup.log", "runner.log", "preview.log")

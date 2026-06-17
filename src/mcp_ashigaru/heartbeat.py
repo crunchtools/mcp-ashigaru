@@ -24,11 +24,15 @@ async def _tick(config: Config) -> None:
         return
     try:
         runs = RunState.list_all(config)
-        active = [r for r in runs if r.get("phase") not in TERMINAL_PHASES]
-        for run in active:
+    except Exception:
+        logger.exception("Heartbeat tick failed listing runs")
+        return
+    active = [r for r in runs if r.get("phase") not in TERMINAL_PHASES]
+    for run in active:
+        try:
             message = _format_heartbeat(run)
             await asyncio.to_thread(
                 _send_webhook, config.notify_webhook, config.notify_webhook_secret, message,
             )
-    except Exception:
-        logger.exception("Heartbeat tick failed")
+        except Exception:
+            logger.exception("Heartbeat failed for run %s", run.get("run_id"))
