@@ -1,4 +1,4 @@
-"""Tests for notification callback."""
+"""Tests for phase change and heartbeat notifications."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 
 from mcp_ashigaru.config import Config
 from mcp_ashigaru.models import Phase, RunMeta
-from mcp_ashigaru.notify import _format_message, send_notification
+from mcp_ashigaru.notify import _format_heartbeat, _format_phase_change, fire_phase_change, send_heartbeat
 
 
 @pytest.fixture
@@ -45,82 +45,68 @@ def _make_meta(phase: Phase, **kwargs) -> RunMeta:
     return RunMeta(**defaults)
 
 
-def test_format_success() -> None:
-    meta = _make_meta(Phase.AWAITING_REVIEW, pr_url="https://github.com/crunchtools/rotv/pull/42")
-    msg = _format_message(meta)
-    assert "completed" in msg
+def test_format_phase_change_basic() -> None:
+    meta = _make_meta(Phase.ANALYZING)
+    msg = _format_phase_change(meta, Phase.QUEUED, Phase.ANALYZING)
+    assert "queued → analyzing" in msg
     assert "rotv-5-123456" in msg
+    assert "rotv #5" in msg
+
+
+def test_format_phase_change_failed() -> None:
+    meta = _make_meta(Phase.FAILED, failure_reason="pytest exit code 1")
+    msg = _format_phase_change(meta, Phase.IMPLEMENTING, Phase.FAILED)
+    assert "implementing → failed" in msg
+    assert "pytest exit code 1" in msg
+
+
+def test_format_phase_change_pr_ready() -> None:
+    meta = _make_meta(Phase.AWAITING_REVIEW, pr_url="https://github.com/crunchtools/rotv/pull/42")
+    msg = _format_phase_change(meta, Phase.VALIDATING, Phase.AWAITING_REVIEW)
+    assert "awaiting-review" in msg
     assert "pull/42" in msg
 
 
-def test_format_failed() -> None:
-    meta = _make_meta(Phase.FAILED, failure_reason="pytest exit code 1 — 3 tests failed")
-    msg = _format_message(meta)
-    assert "failed" in msg
-    assert "pytest" in msg
+def test_format_heartbeat() -> None:
+    meta = _make_meta(Phase.ANALYZING)
+    msg = _format_heartbeat(meta, 12, "Read Sidebar.jsx")
+    assert "Heartbeat" in msg
+    assert "12m elapsed" in msg
+    assert "analyzing" in msg
+    assert "Read Sidebar.jsx" in msg
 
 
-def test_format_escalated() -> None:
-    meta = _make_meta(Phase.ESCALATED)
-    msg = _format_message(meta)
-    assert "escalated" in msg
-    assert "tiers exhausted" in msg
+def test_fire_phase_change_no_config() -> None:
+    meta = _make_meta(Phase.ANALYZING)
+    cfg = Config(state_dir=Path("/tmp/test"))
+    with patch("mcp_ashigaru.notify._send_webhook") as mock:
+        fire_phase_change(meta, Phase.QUEUED, Phase.ANALYZING, cfg)
+        mock.assert_not_called()
 
 
-def test_format_failed_no_reason() -> None:
-    meta = _make_meta(Phase.FAILED)
-    msg = _format_message(meta)
-    assert "unknown error" in msg
+def test_fire_phase_change_sends_webhook(webhook_cfg: Config) -> None:
+    meta = _make_meta(Phase.FAILED, failure_reason="git push failed")
+    with patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop:
+        mock_task = mock_loop.return_value.create_task
+        fire_phase_change(meta, Phase.IMPLEMENTING, Phase.FAILED, webhook_cfg)
+        mock_task.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_send_skipped_when_no_config(tmp_path: Path) -> None:
+async def test_send_heartbeat_webhook(webhook_cfg: Config) -> None:
+    meta = _make_meta(Phase.ANALYZING)
+    with patch("mcp_ashigaru.notify._send_webhook") as mock_webhook:
+        await send_heartbeat(meta, 12, "Read Sidebar.jsx", webhook_cfg)
+        mock_webhook.assert_called_once()
+        args = mock_webhook.call_args[0]
+        assert args[0] == "http://kagetora:8644/webhooks/ashigaru-complete"
+        assert "Heartbeat" in args[2]
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_skipped_when_no_config(tmp_path: Path) -> None:
     cfg = Config(state_dir=tmp_path / "ashigaru")
-    meta = _make_meta(Phase.FAILED)
-    with patch("mcp_ashigaru.notify.asyncio.create_subprocess_exec") as mock_exec:
-        await send_notification(meta, cfg)
-        mock_exec.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_send_calls_command(cfg: Config) -> None:
-    meta = _make_meta(Phase.AWAITING_REVIEW, pr_url="https://github.com/crunchtools/rotv/pull/42")
-    mock_proc = AsyncMock()
-    mock_proc.communicate.return_value = (b"", b"")
-    mock_proc.returncode = 0
-
-    with patch("mcp_ashigaru.notify.asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-        await send_notification(meta, cfg)
-        mock_exec.assert_called_once()
-        args = mock_exec.call_args[0]
-        assert args[0] == "hermes"
-        assert args[1] == "send"
-        assert "completed" in args[-1]
-
-
-@pytest.mark.asyncio
-async def test_webhook_posts_with_hmac(webhook_cfg: Config) -> None:
-    meta = _make_meta(Phase.AWAITING_REVIEW, pr_url="https://github.com/crunchtools/rotv/pull/42")
-
-    with patch("mcp_ashigaru.notify._send_webhook") as mock_webhook:
-        await send_notification(meta, webhook_cfg)
-        mock_webhook.assert_called_once()
-        url, secret, message = mock_webhook.call_args[0]
-        assert url == "http://kagetora:8644/webhooks/ashigaru-complete"
-        assert secret == "test-secret"
-        assert "completed" in message
-
-
-@pytest.mark.asyncio
-async def test_webhook_preferred_over_cmd(tmp_path: Path) -> None:
-    cfg = Config(
-        state_dir=tmp_path / "ashigaru",
-        notify_cmd="hermes send --to signal:+15551234567",
-        notify_webhook="http://kagetora:8644/webhooks/ashigaru-complete",
-        notify_webhook_secret="test-secret",
-    )
-    meta = _make_meta(Phase.FAILED)
-
-    with patch("mcp_ashigaru.notify._send_webhook") as mock_webhook:
-        await send_notification(meta, cfg)
-        mock_webhook.assert_called_once()
+    meta = _make_meta(Phase.ANALYZING)
+    with patch("mcp_ashigaru.notify._send_webhook") as mock:
+        await send_heartbeat(meta, 5, "test", cfg)
+        mock.assert_not_called()

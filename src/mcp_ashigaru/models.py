@@ -30,6 +30,21 @@ class Phase(str, Enum):
     PREPARING = "preparing"
 
 
+TERMINAL_PHASES = frozenset({
+    Phase.AWAITING_REVIEW,
+    Phase.SHIPPED,
+    Phase.FAILED,
+    Phase.ESCALATED,
+    Phase.CANCELLED,
+})
+
+_LEGACY_PREFIXES = ("editing", "gating", "awaiting-approval", "on-dev", "deploying", "preparing")
+ACTIVE_PHASES = frozenset(
+    p for p in Phase
+    if p not in TERMINAL_PHASES and not p.value.startswith(_LEGACY_PREFIXES)
+)
+
+
 class Source(str, Enum):
     ASHIGARU = "ashigaru"
     EXTERNAL = "external"

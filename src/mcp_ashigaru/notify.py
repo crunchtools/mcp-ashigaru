@@ -1,4 +1,4 @@
-"""Completion callback — fire-and-forget notification when runs finish."""
+"""Webhook notifications — phase changes and heartbeat."""
 
 from __future__ import annotations
 
@@ -13,36 +13,31 @@ from urllib.request import Request, urlopen
 
 if TYPE_CHECKING:
     from .config import Config
-    from .models import RunMeta
+    from .models import Phase, RunMeta
 
 logger = logging.getLogger(__name__)
 
 
-def _format_message(meta: RunMeta) -> str:
-    phase = meta.phase.value
+def _format_phase_change(meta: RunMeta, old_phase: Phase, new_phase: Phase) -> str:
     repo_issue = f"{meta.repo} #{meta.issue}"
     title = meta.title or repo_issue
+    lines = [
+        f"Phase change: {old_phase.value} → {new_phase.value}",
+        f"Run {meta.run_id} ({repo_issue})",
+        title,
+    ]
+    if new_phase.value == "failed" and meta.failure_reason:
+        lines.append(f"Error: {meta.failure_reason}")
+    if new_phase.value == "awaiting-review" and meta.pr_url:
+        lines.append(f"PR: {meta.pr_url}")
+    return "\n".join(lines)
 
-    if phase == "awaiting-review":
-        pr = meta.pr_url or "no PR URL"
-        return (
-            f"Run {meta.run_id} completed — PR ready\n"
-            f"{title} ({repo_issue})\n"
-            f"PR: {pr}"
-        )
 
-    if phase == "escalated":
-        return (
-            f"Run {meta.run_id} escalated — all tiers exhausted\n"
-            f"{title} ({repo_issue})\n"
-            f"Needs human intervention"
-        )
-
-    reason = meta.failure_reason or "unknown error"
+def _format_heartbeat(meta: RunMeta, elapsed_minutes: int, last_activity: str) -> str:
     return (
-        f"Run {meta.run_id} failed\n"
-        f"{title} ({repo_issue})\n"
-        f"Error: {reason}"
+        f"Heartbeat: {meta.run_id} still in \"{meta.phase.value}\" "
+        f"({elapsed_minutes}m elapsed)\n"
+        f"Last activity: {last_activity}"
     )
 
 
@@ -81,18 +76,37 @@ async def _send_cmd(cmd: str, message: str) -> None:
         )
 
 
-async def send_notification(meta: RunMeta, config: Config) -> None:
+async def _deliver(message: str, config: Config) -> None:
+    if config.notify_webhook:
+        await asyncio.to_thread(
+            _send_webhook, config.notify_webhook, config.notify_webhook_secret, message,
+        )
+    elif config.notify_cmd:
+        await _send_cmd(config.notify_cmd, message)
+
+
+def fire_phase_change(
+    meta: RunMeta, old_phase: Phase, new_phase: Phase, config: Config,
+) -> None:
     if not config.notify_webhook and not config.notify_cmd:
         return
-    message = _format_message(meta)
+    message = _format_phase_change(meta, old_phase, new_phase)
     try:
-        if config.notify_webhook:
-            await asyncio.to_thread(
-                _send_webhook, config.notify_webhook, config.notify_webhook_secret, message,
-            )
-        else:
-            await _send_cmd(config.notify_cmd, message)
+        loop = asyncio.get_running_loop()
+        loop.create_task(_deliver(message, config))
+    except RuntimeError:
+        pass
+
+
+async def send_heartbeat(
+    meta: RunMeta, elapsed_minutes: int, last_activity: str, config: Config,
+) -> None:
+    if not config.notify_webhook and not config.notify_cmd:
+        return
+    message = _format_heartbeat(meta, elapsed_minutes, last_activity)
+    try:
+        await _deliver(message, config)
     except TimeoutError:
-        logger.warning("Notification timed out after 30s")
+        logger.warning("Heartbeat notification timed out")
     except Exception:
-        logger.exception("Notification failed")
+        logger.exception("Heartbeat notification failed")

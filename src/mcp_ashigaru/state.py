@@ -11,6 +11,7 @@ from typing import Any
 from .activity import ActivityLog
 from .config import Config
 from .models import Activity, ActivityKind, Attempt, Phase, RunMeta
+from .notify import fire_phase_change
 
 RUNID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,99}")
 LOG_FILES = ("agent.err", "setup.log", "runner.log", "preview.log")
@@ -23,10 +24,11 @@ def _now() -> str:
 class RunState:
     """Manages a single run's state on disk."""
 
-    def __init__(self, run_dir: Path) -> None:
+    def __init__(self, run_dir: Path, config: Config | None = None) -> None:
         self._dir = run_dir
         self._meta_path = run_dir / "meta.json"
         self._activity = ActivityLog(run_dir)
+        self._config = config
 
     @classmethod
     def create(cls, meta: RunMeta, config: Config) -> RunState:
@@ -35,7 +37,7 @@ class RunState:
         meta.created = meta.created or _now()
         meta.updated = _now()
         (run_dir / "meta.json").write_text(meta.model_dump_json(indent=2))
-        state = cls(run_dir)
+        state = cls(run_dir, config)
         state._activity.append(Activity(
             timestamp=_now(),
             kind=ActivityKind.REGISTRATION,
@@ -51,7 +53,7 @@ class RunState:
         run_dir = config.runs_dir / run_id
         if not (run_dir / "meta.json").exists():
             return None
-        return cls(run_dir)
+        return cls(run_dir, config)
 
     @property
     def run_dir(self) -> Path:
@@ -82,6 +84,8 @@ class RunState:
             phase_before=old_phase,
             phase_after=phase,
         ))
+        if self._config and old_phase != phase:
+            fire_phase_change(meta, old_phase, phase, self._config)
 
     def update_meta(self, **fields: Any) -> None:
         meta = self.read_meta()

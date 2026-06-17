@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,6 +28,7 @@ from . import review as review_mod
 from . import runner
 from .config import Config
 from .git_ops import commit_and_push, merge_pr
+from .heartbeat import heartbeat_loop
 from .models import Activity, ActivityKind, Phase, RunMeta, Source
 from .slots import SlotManager
 from .state import RunState
@@ -34,6 +37,16 @@ REPO_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 DEFAULT_PORT = 8020
 
 CFG = Config()
+
+
+@asynccontextmanager
+async def _lifespan(_server: FastMCP) -> AsyncIterator[None]:
+    task = asyncio.create_task(heartbeat_loop(CFG))
+    try:
+        yield
+    finally:
+        task.cancel()
+
 
 mcp = FastMCP(
     "mcp-ashigaru",
@@ -46,6 +59,7 @@ mcp = FastMCP(
         "deploy_preview, request_changes, run_review, promote, "
         "teardown_preview, cancel_run, status, list_runs, run_activity, run_log."
     ),
+    lifespan=_lifespan,
 )
 
 

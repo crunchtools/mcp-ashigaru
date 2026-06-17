@@ -29,7 +29,6 @@ from .git_ops import (
     get_prior_diff,
 )
 from .models import Activity, ActivityKind, Attempt, Phase
-from .notify import send_notification
 from .state import RunState
 
 
@@ -57,7 +56,6 @@ async def run_new(
             timestamp=_now(), kind=ActivityKind.ERROR,
             summary=f"Runner crash: {exc}",
         ))
-    await _notify_if_terminal(state, config)
 
 
 async def _run_new_inner(
@@ -174,7 +172,6 @@ async def run_iterate(
             timestamp=_now(), kind=ActivityKind.ERROR,
             summary=f"Runner crash: {exc}",
         ))
-    await _notify_if_terminal(state, config)
 
 
 async def _run_iterate_inner(
@@ -240,15 +237,6 @@ async def _run_iterate_inner(
             started_at=_now(),
         ))
         state.set_phase(Phase.FAILED, gate_output)
-
-
-_TERMINAL_PHASES = {Phase.AWAITING_REVIEW, Phase.FAILED, Phase.ESCALATED}
-
-
-async def _notify_if_terminal(state: RunState, config: Config) -> None:
-    meta = state.read_meta()
-    if meta.phase in _TERMINAL_PHASES:
-        await send_notification(meta, config)
 
 
 async def _classify_events_live(state: RunState, events_path: Path) -> None:
