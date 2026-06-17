@@ -47,6 +47,9 @@ class Config:
     notify_webhook_secret: str = field(default_factory=lambda: os.environ.get(
         "ASHIGARU_NOTIFY_WEBHOOK_SECRET", ""
     ))
+    heartbeat_interval: int = field(default_factory=lambda: int(
+        os.environ.get("ASHIGARU_HEARTBEAT_INTERVAL", "300")
+    ))
 
     @property
     def runs_dir(self) -> Path:

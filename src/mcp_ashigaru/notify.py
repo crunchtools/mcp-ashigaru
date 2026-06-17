@@ -1,4 +1,4 @@
-"""Completion callback — fire-and-forget notification when runs finish."""
+"""Completion callback — fire-and-forget notification when run phases change."""
 
 from __future__ import annotations
 
@@ -8,42 +8,37 @@ import hmac
 import json
 import logging
 import shlex
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.request import Request, urlopen
 
 if TYPE_CHECKING:
     from .config import Config
-    from .models import RunMeta
+    from .models import Phase, RunMeta
 
 logger = logging.getLogger(__name__)
 
 
-def _format_message(meta: RunMeta) -> str:
-    phase = meta.phase.value
+def _format_phase_change(meta: RunMeta, old_phase: Phase, new_phase: Phase) -> str:
     repo_issue = f"{meta.repo} #{meta.issue}"
     title = meta.title or repo_issue
-
-    if phase == "awaiting-review":
-        pr = meta.pr_url or "no PR URL"
-        return (
-            f"Run {meta.run_id} completed — PR ready\n"
-            f"{title} ({repo_issue})\n"
-            f"PR: {pr}"
-        )
-
-    if phase == "escalated":
-        return (
-            f"Run {meta.run_id} escalated — all tiers exhausted\n"
-            f"{title} ({repo_issue})\n"
-            f"Needs human intervention"
-        )
-
-    reason = meta.failure_reason or "unknown error"
     return (
-        f"Run {meta.run_id} failed\n"
-        f"{title} ({repo_issue})\n"
-        f"Error: {reason}"
+        f"Run {meta.run_id} phase: {old_phase.value} → {new_phase.value}\n"
+        f"{title} ({repo_issue})"
     )
+
+
+def _format_heartbeat(run: dict[str, Any]) -> str:
+    repo_issue = f"{run.get('repo')} #{run.get('issue')}"
+    title = run.get("title") or repo_issue
+    phase = run.get("phase", "unknown")
+    lines = [
+        f"[heartbeat] Run {run.get('run_id')} — {phase}",
+        f"{title} ({repo_issue})",
+    ]
+    pr_url = run.get("pr_url")
+    if pr_url:
+        lines.append(f"PR: {pr_url}")
+    return "\n".join(lines)
 
 
 def _send_webhook(url: str, secret: str, message: str) -> None:
@@ -81,10 +76,12 @@ async def _send_cmd(cmd: str, message: str) -> None:
         )
 
 
-async def send_notification(meta: RunMeta, config: Config) -> None:
+async def send_phase_change(
+    meta: RunMeta, old_phase: Phase, new_phase: Phase, config: Config,
+) -> None:
     if not config.notify_webhook and not config.notify_cmd:
         return
-    message = _format_message(meta)
+    message = _format_phase_change(meta, old_phase, new_phase)
     try:
         if config.notify_webhook:
             await asyncio.to_thread(
@@ -93,6 +90,6 @@ async def send_notification(meta: RunMeta, config: Config) -> None:
         else:
             await _send_cmd(config.notify_cmd, message)
     except TimeoutError:
-        logger.warning("Notification timed out after 30s")
+        logger.warning("Phase change notification timed out after 30s")
     except Exception:
-        logger.exception("Notification failed")
+        logger.exception("Phase change notification failed")

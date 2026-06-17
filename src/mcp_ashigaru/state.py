@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import notify
 from .activity import ActivityLog
 from .config import Config
 from .models import Activity, ActivityKind, Attempt, Phase, RunMeta
@@ -23,8 +25,9 @@ def _now() -> str:
 class RunState:
     """Manages a single run's state on disk."""
 
-    def __init__(self, run_dir: Path) -> None:
+    def __init__(self, run_dir: Path, config: Config) -> None:
         self._dir = run_dir
+        self._config = config
         self._meta_path = run_dir / "meta.json"
         self._activity = ActivityLog(run_dir)
 
@@ -35,7 +38,7 @@ class RunState:
         meta.created = meta.created or _now()
         meta.updated = _now()
         (run_dir / "meta.json").write_text(meta.model_dump_json(indent=2))
-        state = cls(run_dir)
+        state = cls(run_dir, config)
         state._activity.append(Activity(
             timestamp=_now(),
             kind=ActivityKind.REGISTRATION,
@@ -51,7 +54,7 @@ class RunState:
         run_dir = config.runs_dir / run_id
         if not (run_dir / "meta.json").exists():
             return None
-        return cls(run_dir)
+        return cls(run_dir, config)
 
     @property
     def run_dir(self) -> Path:
@@ -82,6 +85,12 @@ class RunState:
             phase_before=old_phase,
             phase_after=phase,
         ))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop:
+            loop.create_task(notify.send_phase_change(meta, old_phase, phase, self._config))
 
     def update_meta(self, **fields: Any) -> None:
         meta = self.read_meta()
