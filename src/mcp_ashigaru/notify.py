@@ -18,21 +18,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _format_phase_change(meta: RunMeta, old_phase: Phase, new_phase: Phase) -> str:
-    repo_issue = f"{meta.repo} #{meta.issue}"
-    title = meta.title or repo_issue
-    lines = [
-        f"Phase change: {old_phase.value} → {new_phase.value}",
-        f"Run {meta.run_id} ({repo_issue})",
-        title,
-    ]
-    if new_phase.value == "failed" and meta.failure_reason:
-        lines.append(f"Error: {meta.failure_reason}")
-    if new_phase.value == "awaiting-review" and meta.pr_url:
-        lines.append(f"PR: {meta.pr_url}")
-    return "\n".join(lines)
-
-
 def _format_heartbeat(meta: RunMeta, elapsed_minutes: int, last_activity: str) -> str:
     return (
         f"Heartbeat: {meta.run_id} still in \"{meta.phase.value}\" "
@@ -88,21 +73,25 @@ async def _deliver(message: str, config: Config) -> None:
 def fire_phase_change(
     meta: RunMeta, old_phase: Phase, new_phase: Phase, config: Config,
 ) -> None:
-    if not config.notify_webhook and not config.notify_cmd:
-        return
-    message = _format_phase_change(meta, old_phase, new_phase)
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_deliver(message, config))
-    except RuntimeError:
-        pass
+    repo_issue = f"{meta.repo} #{meta.issue}"
+    title = meta.title or repo_issue
+    lines = [
+        f"Phase change: {old_phase.value} → {new_phase.value}",
+        f"Run {meta.run_id} ({repo_issue})",
+        title,
+    ]
+    if new_phase.value == "failed" and meta.failure_reason:
+        lines.append(f"Error: {meta.failure_reason}")
+    if new_phase.value == "awaiting-review" and meta.pr_url:
+        lines.append(f"PR: {meta.pr_url}")
+    message = "\n".join(lines)
+    loop = asyncio.get_running_loop()
+    loop.create_task(_deliver(message, config))
 
 
 async def send_heartbeat(
     meta: RunMeta, elapsed_minutes: int, last_activity: str, config: Config,
 ) -> None:
-    if not config.notify_webhook and not config.notify_cmd:
-        return
     message = _format_heartbeat(meta, elapsed_minutes, last_activity)
     try:
         await _deliver(message, config)

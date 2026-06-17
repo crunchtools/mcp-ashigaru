@@ -84,7 +84,11 @@ class RunState:
             phase_before=old_phase,
             phase_after=phase,
         ))
-        if self._config and old_phase != phase:
+        if (
+            self._config
+            and old_phase != phase
+            and (self._config.notify_webhook or self._config.notify_cmd)
+        ):
             fire_phase_change(meta, old_phase, phase, self._config)
 
     def update_meta(self, **fields: Any) -> None:
