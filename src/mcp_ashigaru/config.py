@@ -41,6 +41,12 @@ class Config:
     notify_cmd: str = field(default_factory=lambda: os.environ.get(
         "ASHIGARU_NOTIFY_CMD", ""
     ))
+    notify_webhook: str = field(default_factory=lambda: os.environ.get(
+        "ASHIGARU_NOTIFY_WEBHOOK", ""
+    ))
+    notify_webhook_secret: str = field(default_factory=lambda: os.environ.get(
+        "ASHIGARU_NOTIFY_WEBHOOK_SECRET", ""
+    ))
 
     @property
     def runs_dir(self) -> Path:

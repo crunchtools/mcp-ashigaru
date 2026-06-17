@@ -20,6 +20,18 @@ def cfg(tmp_path: Path) -> Config:
     return Config(state_dir=state_dir, notify_cmd="hermes send --to signal:+15551234567")
 
 
+@pytest.fixture
+def webhook_cfg(tmp_path: Path) -> Config:
+    state_dir = tmp_path / "ashigaru"
+    (state_dir / "runs").mkdir(parents=True)
+    (state_dir / "work").mkdir(parents=True)
+    return Config(
+        state_dir=state_dir,
+        notify_webhook="http://kagetora:8644/webhooks/ashigaru-complete",
+        notify_webhook_secret="test-secret",
+    )
+
+
 def _make_meta(phase: Phase, **kwargs) -> RunMeta:
     defaults = dict(
         run_id="rotv-5-123456",
@@ -62,11 +74,8 @@ def test_format_failed_no_reason() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_skipped_when_no_cmd(tmp_path: Path) -> None:
-    cfg = Config(
-        state_dir=tmp_path / "ashigaru",
-        notify_cmd="",
-    )
+async def test_send_skipped_when_no_config(tmp_path: Path) -> None:
+    cfg = Config(state_dir=tmp_path / "ashigaru")
     meta = _make_meta(Phase.FAILED)
     with patch("mcp_ashigaru.notify.asyncio.create_subprocess_exec") as mock_exec:
         await send_notification(meta, cfg)
@@ -87,3 +96,31 @@ async def test_send_calls_command(cfg: Config) -> None:
         assert args[0] == "hermes"
         assert args[1] == "send"
         assert "completed" in args[-1]
+
+
+@pytest.mark.asyncio
+async def test_webhook_posts_with_hmac(webhook_cfg: Config) -> None:
+    meta = _make_meta(Phase.AWAITING_REVIEW, pr_url="https://github.com/crunchtools/rotv/pull/42")
+
+    with patch("mcp_ashigaru.notify._send_webhook") as mock_webhook:
+        await send_notification(meta, webhook_cfg)
+        mock_webhook.assert_called_once()
+        url, secret, message = mock_webhook.call_args[0]
+        assert url == "http://kagetora:8644/webhooks/ashigaru-complete"
+        assert secret == "test-secret"
+        assert "completed" in message
+
+
+@pytest.mark.asyncio
+async def test_webhook_preferred_over_cmd(tmp_path: Path) -> None:
+    cfg = Config(
+        state_dir=tmp_path / "ashigaru",
+        notify_cmd="hermes send --to signal:+15551234567",
+        notify_webhook="http://kagetora:8644/webhooks/ashigaru-complete",
+        notify_webhook_secret="test-secret",
+    )
+    meta = _make_meta(Phase.FAILED)
+
+    with patch("mcp_ashigaru.notify._send_webhook") as mock_webhook:
+        await send_notification(meta, cfg)
+        mock_webhook.assert_called_once()
