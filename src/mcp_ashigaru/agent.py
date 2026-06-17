@@ -9,8 +9,8 @@ from .config import Config
 
 TIER_TABLE: dict[int, tuple[str, int]] = {
     1: ("claude-sonnet-4-6", 40),
-    2: ("claude-opus-4-6", 60),
-    3: ("claude-opus-4-6", 80),
+    2: ("claude-opus-4-8", 60),
+    3: ("claude-opus-4-8", 80),
 }
 MAX_TIER = 3
 
