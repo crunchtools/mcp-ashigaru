@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 async def heartbeat_loop(config: Config) -> None:
+    if config.heartbeat_interval <= 0:
+        return
     while True:
         await asyncio.sleep(config.heartbeat_interval)
         try:
