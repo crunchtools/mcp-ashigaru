@@ -267,8 +267,14 @@ async def create_pr(
 
 @mcp.tool()
 async def deploy_preview(run_id: str) -> dict[str, Any]:
-    """Build and launch a webapp preview. Returns preview_url (correct domain per repo)."""
-    return await preview_mod.deploy(run_id, CFG)
+    """Build and launch a webapp preview in the background. Returns immediately.
+    Poll status(run_id) — phase goes to preview-live when ready, or failed."""
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return {"error": f"unknown run_id: {run_id}"}
+    state.set_phase(Phase.BUILDING, "Preview build starting")
+    asyncio.create_task(preview_mod.deploy(run_id, CFG))
+    return {"run_id": run_id, "status": "deploying"}
 
 
 @mcp.tool()
