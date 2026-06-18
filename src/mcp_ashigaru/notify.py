@@ -85,8 +85,11 @@ def fire_phase_change(
     if new_phase.value == "awaiting-review" and meta.pr_url:
         lines.append(f"PR: {meta.pr_url}")
     message = "\n".join(lines)
-    loop = asyncio.get_running_loop()
-    loop.create_task(_deliver(message, config))
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_deliver(message, config))
+    except RuntimeError:
+        pass
 
 
 async def send_heartbeat(
