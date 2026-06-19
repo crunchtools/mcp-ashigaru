@@ -23,17 +23,22 @@ class MatrixNotifier:
     """Persistent mautrix client with E2EE for sending Matrix notifications."""
 
     def __init__(self, homeserver: str, access_token: str, room_id: str,
-                 mention_user: str, device_id: str) -> None:
+                 mention_user: str, device_id: str, crypto_dir: str = "") -> None:
         self._homeserver = homeserver
         self._access_token = access_token
         self._room_id = room_id
         self._mention_user = mention_user
         self._device_id = device_id
+        self._crypto_dir = crypto_dir
         self._client: Any = None
         self._crypto: Any = None
+        self._pickle_path: str = ""
         self._ready = False
 
     async def start(self) -> None:
+        import pickle
+        from pathlib import Path
+
         from mautrix.client import Client
         from mautrix.crypto import MemoryCryptoStore, OlmMachine, StateStore
         from mautrix.types import (
@@ -68,6 +73,24 @@ class MatrixNotifier:
         crypto_store = MemoryCryptoStore(account_id=str(whoami.user_id), pickle_key="ashigaru")
         await crypto_store.open()
 
+        if self._crypto_dir:
+            crypto_path = Path(self._crypto_dir)
+            crypto_path.mkdir(parents=True, exist_ok=True)
+            self._pickle_path = str(crypto_path / "olm_state.pickle")
+            if Path(self._pickle_path).exists():
+                try:
+                    with open(self._pickle_path, "rb") as f:
+                        saved = pickle.load(f)  # noqa: S301
+                    crypto_store._devices = saved.get("devices", {})
+                    crypto_store._olm_sessions = saved.get("olm_sessions", {})
+                    crypto_store._inbound_sessions = saved.get("inbound_sessions", {})
+                    crypto_store._outbound_sessions = saved.get("outbound_sessions", {})
+                    if saved.get("account"):
+                        crypto_store._account = saved["account"]
+                    logger.info("Restored Matrix crypto state from %s", self._pickle_path)
+                except Exception:
+                    logger.warning("Failed to restore crypto state, starting fresh")
+
         state_store = _AlwaysEncryptedStateStore()
         self._client.state_store = state_store
         self._crypto = OlmMachine(
@@ -77,11 +100,31 @@ class MatrixNotifier:
         await self._crypto.load()
         if not self._crypto.account.shared:
             await self._crypto.share_keys()
+        await self._save_crypto_state()
 
         self._ready = True
         logger.info("Matrix E2EE notifier ready: %s", whoami.user_id)
 
+    async def _save_crypto_state(self) -> None:
+        if not self._pickle_path or not self._crypto:
+            return
+        import pickle
+        try:
+            store = self._crypto.crypto_store
+            state = {
+                "account": getattr(store, "_account", None),
+                "devices": getattr(store, "_devices", {}),
+                "olm_sessions": getattr(store, "_olm_sessions", {}),
+                "inbound_sessions": getattr(store, "_inbound_sessions", {}),
+                "outbound_sessions": getattr(store, "_outbound_sessions", {}),
+            }
+            with open(self._pickle_path, "wb") as f:
+                pickle.dump(state, f)
+        except Exception:
+            logger.warning("Failed to save crypto state")
+
     async def stop(self) -> None:
+        await self._save_crypto_state()
         if self._client:
             await self._client.api.session.close()
         self._ready = False
@@ -127,18 +170,21 @@ class MatrixNotifier:
         except Exception:
             logger.warning("E2EE send failed, falling back to plaintext")
             await self._client.send_message_event(room_id, EventType.ROOM_MESSAGE, content)
+        await self._save_crypto_state()
 
 
 async def init_matrix(config: Config) -> None:
     global _matrix_notifier
     if not (config.matrix_homeserver and config.matrix_access_token and config.matrix_room_id):
         return
+    crypto_dir = config.matrix_crypto_dir or str(config.state_dir / ".matrix-crypto")
     _matrix_notifier = MatrixNotifier(
         homeserver=config.matrix_homeserver,
         access_token=config.matrix_access_token,
         room_id=config.matrix_room_id,
         mention_user=config.matrix_mention_user,
         device_id=config.matrix_device_id,
+        crypto_dir=crypto_dir,
     )
     try:
         await _matrix_notifier.start()

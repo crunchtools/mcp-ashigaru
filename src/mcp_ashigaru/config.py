@@ -65,6 +65,9 @@ class Config:
     matrix_device_id: str = field(default_factory=lambda: os.environ.get(
         "ASHIGARU_MATRIX_DEVICE_ID", "ASHIGARU_BOT"
     ))
+    matrix_crypto_dir: str = field(default_factory=lambda: os.environ.get(
+        "ASHIGARU_MATRIX_CRYPTO_DIR", ""
+    ))
 
     @property
     def runs_dir(self) -> Path:
