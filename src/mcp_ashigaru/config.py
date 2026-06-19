@@ -50,6 +50,18 @@ class Config:
     heartbeat_interval: int = field(default_factory=lambda: int(
         os.environ.get("ASHIGARU_HEARTBEAT_INTERVAL", "300")
     ))
+    matrix_homeserver: str = field(default_factory=lambda: os.environ.get(
+        "ASHIGARU_MATRIX_HOMESERVER", ""
+    ))
+    matrix_access_token: str = field(default_factory=lambda: os.environ.get(
+        "ASHIGARU_MATRIX_ACCESS_TOKEN", ""
+    ))
+    matrix_room_id: str = field(default_factory=lambda: os.environ.get(
+        "ASHIGARU_MATRIX_ROOM_ID", ""
+    ))
+    matrix_mention_user: str = field(default_factory=lambda: os.environ.get(
+        "ASHIGARU_MATRIX_MENTION_USER", ""
+    ))
 
     @property
     def runs_dir(self) -> Path:

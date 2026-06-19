@@ -87,7 +87,11 @@ class RunState:
         if (
             self._config
             and old_phase != phase
-            and (self._config.notify_webhook or self._config.notify_cmd)
+            and (
+                self._config.notify_webhook
+                or self._config.notify_cmd
+                or (self._config.matrix_homeserver and self._config.matrix_room_id)
+            )
         ):
             fire_phase_change(meta, old_phase, phase, self._config)
 
