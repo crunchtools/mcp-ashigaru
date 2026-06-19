@@ -36,7 +36,7 @@ class MatrixNotifier:
         self._ready = False
 
     async def start(self) -> None:
-        import pickle
+        import json as _json
         from pathlib import Path
 
         from mautrix.client import Client
@@ -76,17 +76,18 @@ class MatrixNotifier:
         if self._crypto_dir:
             crypto_path = Path(self._crypto_dir)
             crypto_path.mkdir(parents=True, exist_ok=True)
-            self._pickle_path = str(crypto_path / "olm_state.pickle")
+            self._pickle_path = str(crypto_path / "olm_state.json")
             if Path(self._pickle_path).exists():
                 try:
-                    with open(self._pickle_path, "rb") as f:
-                        saved = pickle.load(f)  # noqa: S301
-                    crypto_store._devices = saved.get("devices", {})
-                    crypto_store._olm_sessions = saved.get("olm_sessions", {})
-                    crypto_store._inbound_sessions = saved.get("inbound_sessions", {})
-                    crypto_store._outbound_sessions = saved.get("outbound_sessions", {})
-                    if saved.get("account"):
-                        crypto_store._account = saved["account"]
+                    from olm import Account as _OlmAccount
+
+                    with open(self._pickle_path) as f:
+                        saved = _json.load(f)
+                    account = _OlmAccount.from_pickle(
+                        saved["account_pickle"].encode(), "ashigaru",
+                    )
+                    account.shared = saved.get("shared", True)  # type: ignore[attr-defined]
+                    crypto_store._account = account  # type: ignore[assignment]
                     logger.info("Restored Matrix crypto state from %s", self._pickle_path)
                 except Exception:
                     logger.warning("Failed to restore crypto state, starting fresh")
@@ -112,18 +113,18 @@ class MatrixNotifier:
     async def _save_crypto_state(self) -> None:
         if not self._pickle_path or not self._crypto:
             return
-        import pickle
+        import json as _json
         try:
-            store = self._crypto.crypto_store
+            account = self._crypto.crypto_store._account
+            if account is None:
+                return
             state = {
-                "account": getattr(store, "_account", None),
-                "devices": getattr(store, "_devices", {}),
-                "olm_sessions": getattr(store, "_olm_sessions", {}),
-                "inbound_sessions": getattr(store, "_inbound_sessions", {}),
-                "outbound_sessions": getattr(store, "_outbound_sessions", {}),
+                "account_pickle": account.pickle("ashigaru").decode(),
+                "shared": account.shared,
             }
-            with open(self._pickle_path, "wb") as f:
-                pickle.dump(state, f)
+            with open(self._pickle_path, "w") as f:
+                _json.dump(state, f)
+            logger.info("Saved Matrix crypto state to %s", self._pickle_path)
         except Exception:
             logger.exception("Failed to save crypto state")
 
