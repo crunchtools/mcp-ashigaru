@@ -125,7 +125,7 @@ class MatrixNotifier:
             with open(self._pickle_path, "wb") as f:
                 pickle.dump(state, f)
         except Exception:
-            logger.warning("Failed to save crypto state")
+            logger.exception("Failed to save crypto state")
 
     async def stop(self) -> None:
         await self._save_crypto_state()
