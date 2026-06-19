@@ -59,8 +59,8 @@ def _recover_orphaned_runs(config: Config) -> None:
 
 @asynccontextmanager
 async def _lifespan(_server: FastMCP) -> AsyncIterator[None]:
-    _recover_orphaned_runs(CFG)
     await init_matrix(CFG)
+    _recover_orphaned_runs(CFG)
     task = asyncio.create_task(heartbeat_loop(CFG))
     try:
         yield
