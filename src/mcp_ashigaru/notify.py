@@ -60,6 +60,7 @@ class MatrixNotifier:
         self._client = Client(
             base_url=self._homeserver,
             token=self._access_token,
+            device_id=self._device_id,
         )
         whoami = await self._client.whoami()
         self._client.mxid = whoami.user_id
@@ -73,7 +74,6 @@ class MatrixNotifier:
             client=self._client, crypto_store=crypto_store, state_store=state_store,
         )
         self._client.crypto = self._crypto
-        self._crypto.device_id = self._device_id
         await self._crypto.load()
         if not self._crypto.account.shared:
             await self._crypto.share_keys()
