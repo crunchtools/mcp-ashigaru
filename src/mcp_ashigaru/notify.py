@@ -1,4 +1,4 @@
-"""Notifications — phase changes and heartbeat via webhook, command, or Matrix."""
+"""Notifications — phase changes and heartbeat via webhook, command, or Matrix E2EE."""
 
 from __future__ import annotations
 
@@ -8,15 +8,149 @@ import hmac
 import json
 import logging
 import shlex
-import time
-from typing import TYPE_CHECKING
-from urllib.request import Request, urlopen
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .config import Config
     from .models import Phase, RunMeta
 
 logger = logging.getLogger(__name__)
+
+_matrix_notifier: MatrixNotifier | None = None
+
+
+class MatrixNotifier:
+    """Persistent mautrix client with E2EE for sending Matrix notifications."""
+
+    def __init__(self, homeserver: str, access_token: str, room_id: str,
+                 mention_user: str, device_id: str) -> None:
+        self._homeserver = homeserver
+        self._access_token = access_token
+        self._room_id = room_id
+        self._mention_user = mention_user
+        self._device_id = device_id
+        self._client: Any = None
+        self._crypto: Any = None
+        self._ready = False
+
+    async def start(self) -> None:
+        from mautrix.client import Client
+        from mautrix.crypto import MemoryCryptoStore, OlmMachine, StateStore
+        from mautrix.types import (
+            EncryptionAlgorithm,
+            RoomEncryptionStateEventContent,
+            RoomID,
+            UserID,
+        )
+
+        class _AlwaysEncryptedStateStore(StateStore):
+            async def is_encrypted(self, _room_id: RoomID) -> bool:
+                return True
+
+            async def get_encryption_info(
+                self, _room_id: RoomID,
+            ) -> RoomEncryptionStateEventContent | None:
+                return RoomEncryptionStateEventContent(
+                    algorithm=EncryptionAlgorithm.MEGOLM_V1,
+                )
+
+            async def find_shared_rooms(self, _user_id: UserID) -> list[RoomID]:
+                return []
+
+        self._client = Client(
+            base_url=self._homeserver,
+            token=self._access_token,
+        )
+        whoami = await self._client.whoami()
+        self._client.mxid = whoami.user_id
+
+        crypto_store = MemoryCryptoStore(account_id=str(whoami.user_id), pickle_key="ashigaru")
+        await crypto_store.open()
+
+        state_store = _AlwaysEncryptedStateStore()
+        self._crypto = OlmMachine(
+            client=self._client, crypto_store=crypto_store, state_store=state_store,
+        )
+        self._client.crypto = self._crypto
+        self._crypto.device_id = self._device_id
+        await self._crypto.load()
+        if not self._crypto.account.shared:
+            await self._crypto.share_keys()
+
+        self._ready = True
+        logger.info("Matrix E2EE notifier ready: %s", whoami.user_id)
+
+    async def stop(self) -> None:
+        if self._client:
+            await self._client.api.session.close()
+        self._ready = False
+
+    async def send(self, message: str, msgtype: str = "m.notice") -> None:
+        if not self._ready or not self._client:
+            logger.warning("Matrix notifier not ready, dropping message")
+            return
+
+        from mautrix.types import (
+            EventType,
+            Format,
+            MessageType,
+            RoomID,
+            TextMessageEventContent,
+        )
+
+        body = message
+        formatted_body = message.replace("\n", "<br>")
+
+        if self._mention_user and msgtype == "m.text":
+            display_name = self._mention_user.split(":", maxsplit=1)[0].lstrip("@")
+            body = f"{self._mention_user}: {message}"
+            formatted_body = (
+                f'<a href="https://matrix.to/#/{self._mention_user}">{display_name}</a>: '
+                + formatted_body
+            )
+
+        content = TextMessageEventContent(
+            msgtype=MessageType(msgtype),
+            body=body,
+            format=Format.HTML,
+            formatted_body=formatted_body,
+        )
+
+        room_id = RoomID(self._room_id)
+
+        try:
+            encrypted = await self._crypto.encrypt_megolm_event(
+                content, room_id, EventType.ROOM_MESSAGE,
+            )
+            await self._client.send_message_event(room_id, EventType.ROOM_ENCRYPTED, encrypted)
+        except Exception:
+            logger.warning("E2EE send failed, falling back to plaintext")
+            await self._client.send_message_event(room_id, EventType.ROOM_MESSAGE, content)
+
+
+async def init_matrix(config: Config) -> None:
+    global _matrix_notifier
+    if not (config.matrix_homeserver and config.matrix_access_token and config.matrix_room_id):
+        return
+    _matrix_notifier = MatrixNotifier(
+        homeserver=config.matrix_homeserver,
+        access_token=config.matrix_access_token,
+        room_id=config.matrix_room_id,
+        mention_user=config.matrix_mention_user,
+        device_id=config.matrix_device_id,
+    )
+    try:
+        await _matrix_notifier.start()
+    except Exception:
+        logger.exception("Failed to initialize Matrix notifier")
+        _matrix_notifier = None
+
+
+async def shutdown_matrix() -> None:
+    global _matrix_notifier
+    if _matrix_notifier:
+        await _matrix_notifier.stop()
+        _matrix_notifier = None
 
 
 def _format_heartbeat(meta: RunMeta, elapsed_minutes: int, last_activity: str) -> str:
@@ -28,6 +162,8 @@ def _format_heartbeat(meta: RunMeta, elapsed_minutes: int, last_activity: str) -
 
 
 def _send_webhook(url: str, secret: str, message: str) -> None:
+    from urllib.request import Request, urlopen
+
     if not url.startswith(("http://", "https://")):
         raise ValueError(f"Webhook URL must be http(s): {url}")
     payload = json.dumps({"body": message}).encode()
@@ -40,51 +176,6 @@ def _send_webhook(url: str, secret: str, message: str) -> None:
             "X-Hub-Signature-256": f"sha256={sig}",
         },
         method="POST",
-    )
-    with urlopen(req, timeout=30) as resp:  # noqa: S310
-        resp.read()
-
-
-def _send_matrix(
-    homeserver: str,
-    token: str,
-    room_id: str,
-    message: str,
-    msgtype: str = "m.notice",
-    mention_user: str = "",
-) -> None:
-    txn_id = f"ashigaru-{int(time.time() * 1000)}"
-    url = (
-        f"{homeserver.rstrip('/')}/_matrix/client/v3/rooms/"
-        f"{room_id}/send/m.room.message/{txn_id}"
-    )
-
-    body = message
-    formatted_body = message.replace("\n", "<br>")
-
-    if mention_user and msgtype == "m.text":
-        display_name = mention_user.split(":", maxsplit=1)[0].lstrip("@")
-        body = f"{mention_user}: {message}"
-        formatted_body = (
-            f'<a href="https://matrix.to/#/{mention_user}">{display_name}</a>: '
-            + formatted_body
-        )
-
-    payload = json.dumps({
-        "msgtype": msgtype,
-        "body": body,
-        "format": "org.matrix.custom.html",
-        "formatted_body": formatted_body,
-    }).encode()
-
-    req = Request(  # noqa: S310
-        url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
-        method="PUT",
     )
     with urlopen(req, timeout=30) as resp:  # noqa: S310
         resp.read()
@@ -108,17 +199,9 @@ async def _send_cmd(cmd: str, message: str) -> None:
 
 
 async def _deliver(message: str, config: Config, msgtype: str = "m.notice") -> None:
-    if config.matrix_homeserver and config.matrix_access_token and config.matrix_room_id:
+    if _matrix_notifier:
         try:
-            await asyncio.to_thread(
-                _send_matrix,
-                config.matrix_homeserver,
-                config.matrix_access_token,
-                config.matrix_room_id,
-                message,
-                msgtype,
-                config.matrix_mention_user,
-            )
+            await _matrix_notifier.send(message, msgtype)
         except Exception:
             logger.exception("Matrix notification failed")
 

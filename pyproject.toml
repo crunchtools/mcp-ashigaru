@@ -21,6 +21,8 @@ classifiers = [
 dependencies = [
     "fastmcp>=2.0",
     "pydantic>=2.0",
+    "mautrix[encryption]==0.21.0",
+    "aiosqlite==0.22.1",
 ]
 
 [project.optional-dependencies]

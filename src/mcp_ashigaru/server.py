@@ -30,6 +30,7 @@ from .config import Config
 from .git_ops import commit_and_push, merge_pr
 from .heartbeat import heartbeat_loop
 from .models import Activity, ActivityKind, Phase, RunMeta, Source
+from .notify import init_matrix, shutdown_matrix
 from .slots import SlotManager
 from .state import RunState
 
@@ -41,11 +42,13 @@ CFG = Config()
 
 @asynccontextmanager
 async def _lifespan(_server: FastMCP) -> AsyncIterator[None]:
+    await init_matrix(CFG)
     task = asyncio.create_task(heartbeat_loop(CFG))
     try:
         yield
     finally:
         task.cancel()
+        await shutdown_matrix()
 
 
 mcp = FastMCP(

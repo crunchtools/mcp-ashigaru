@@ -62,6 +62,9 @@ class Config:
     matrix_mention_user: str = field(default_factory=lambda: os.environ.get(
         "ASHIGARU_MATRIX_MENTION_USER", ""
     ))
+    matrix_device_id: str = field(default_factory=lambda: os.environ.get(
+        "ASHIGARU_MATRIX_DEVICE_ID", "ASHIGARU_BOT"
+    ))
 
     @property
     def runs_dir(self) -> Path:

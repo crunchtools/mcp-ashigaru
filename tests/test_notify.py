@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from mcp_ashigaru.config import Config
 from mcp_ashigaru.models import Phase, RunMeta
-from mcp_ashigaru.notify import _format_heartbeat, _send_matrix, fire_phase_change, send_heartbeat
+from mcp_ashigaru.notify import _format_heartbeat, fire_phase_change, send_heartbeat
 
 
 @pytest.fixture
@@ -54,6 +53,14 @@ def both_cfg(tmp_path: Path) -> Config:
         matrix_room_id="!test:matrix.org",
         matrix_mention_user="@kagetora:matrix.org",
     )
+
+
+@pytest.fixture
+def mock_matrix_notifier():
+    mock = AsyncMock()
+    mock.send = AsyncMock()
+    with patch("mcp_ashigaru.notify._matrix_notifier", mock):
+        yield mock
 
 
 def _make_meta(phase: Phase, **kwargs) -> RunMeta:
@@ -115,107 +122,65 @@ async def test_send_heartbeat_webhook(webhook_cfg: Config) -> None:
 async def test_send_heartbeat_skipped_when_no_config(tmp_path: Path) -> None:
     cfg = Config(state_dir=tmp_path / "ashigaru")
     meta = _make_meta(Phase.ANALYZING)
-    with (
-        patch("mcp_ashigaru.notify._send_webhook") as mock_wh,
-        patch("mcp_ashigaru.notify._send_matrix") as mock_mx,
-    ):
+    with patch("mcp_ashigaru.notify._send_webhook") as mock_wh:
         await send_heartbeat(meta, 5, "test", cfg)
         mock_wh.assert_not_called()
-        mock_mx.assert_not_called()
 
 
 # --- Matrix notification tests ---
 
 
 @pytest.mark.asyncio
-async def test_send_heartbeat_matrix(matrix_cfg: Config) -> None:
+async def test_send_heartbeat_matrix(mock_matrix_notifier) -> None:
+    cfg = Config(state_dir=Path("/tmp/test"))  # noqa: S108
     meta = _make_meta(Phase.ANALYZING)
-    with patch("mcp_ashigaru.notify._send_matrix") as mock_matrix:
-        await send_heartbeat(meta, 12, "Read Sidebar.jsx", matrix_cfg)
-        mock_matrix.assert_called_once()
-        assert mock_matrix.call_args[0][4] == "m.notice"
+    await send_heartbeat(meta, 12, "Read Sidebar.jsx", cfg)
+    mock_matrix_notifier.send.assert_called_once()
+    assert mock_matrix_notifier.send.call_args[0][1] == "m.notice"
 
 
 @pytest.mark.asyncio
-async def test_terminal_phase_uses_m_text(matrix_cfg: Config) -> None:
+async def test_terminal_phase_uses_m_text(mock_matrix_notifier) -> None:
+    cfg = Config(state_dir=Path("/tmp/test"))  # noqa: S108
     meta = _make_meta(Phase.AWAITING_REVIEW)
-    with (
-        patch("mcp_ashigaru.notify._send_matrix") as mock_matrix,
-        patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop,
-    ):
+    with patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop:
         mock_loop.return_value.create_task = asyncio.ensure_future
-        fire_phase_change(meta, Phase.VALIDATING, Phase.AWAITING_REVIEW, matrix_cfg)
+        fire_phase_change(meta, Phase.VALIDATING, Phase.AWAITING_REVIEW, cfg)
         await asyncio.sleep(0.1)
-        mock_matrix.assert_called_once()
-        assert mock_matrix.call_args[0][4] == "m.text"
+        mock_matrix_notifier.send.assert_called_once()
+        assert mock_matrix_notifier.send.call_args[0][1] == "m.text"
 
 
 @pytest.mark.asyncio
-async def test_nonterminal_phase_uses_m_notice(matrix_cfg: Config) -> None:
+async def test_nonterminal_phase_uses_m_notice(mock_matrix_notifier) -> None:
+    cfg = Config(state_dir=Path("/tmp/test"))  # noqa: S108
     meta = _make_meta(Phase.ANALYZING)
-    with (
-        patch("mcp_ashigaru.notify._send_matrix") as mock_matrix,
-        patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop,
-    ):
+    with patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop:
         mock_loop.return_value.create_task = asyncio.ensure_future
-        fire_phase_change(meta, Phase.QUEUED, Phase.ANALYZING, matrix_cfg)
+        fire_phase_change(meta, Phase.QUEUED, Phase.ANALYZING, cfg)
         await asyncio.sleep(0.1)
-        mock_matrix.assert_called_once()
-        assert mock_matrix.call_args[0][4] == "m.notice"
+        mock_matrix_notifier.send.assert_called_once()
+        assert mock_matrix_notifier.send.call_args[0][1] == "m.notice"
 
 
 @pytest.mark.asyncio
-async def test_mention_added_for_m_text() -> None:
-    with patch("mcp_ashigaru.notify.urlopen") as mock_urlopen:
-        mock_urlopen.return_value.__enter__ = lambda _s: mock_urlopen.return_value
-        mock_urlopen.return_value.__exit__ = lambda _s, *_a: None
-        mock_urlopen.return_value.read = lambda: b""
-        _send_matrix(
-            "https://matrix.org", "tok", "!room:matrix.org",
-            "test message", "m.text", "@kagetora:matrix.org",
-        )
-        req = mock_urlopen.call_args[0][0]
-        body = json.loads(req.data)
-        assert body["body"].startswith("@kagetora:matrix.org:")
-        assert "matrix.to" in body["formatted_body"]
-        assert body["msgtype"] == "m.text"
-
-
-@pytest.mark.asyncio
-async def test_no_mention_for_m_notice() -> None:
-    with patch("mcp_ashigaru.notify.urlopen") as mock_urlopen:
-        mock_urlopen.return_value.__enter__ = lambda _s: mock_urlopen.return_value
-        mock_urlopen.return_value.__exit__ = lambda _s, *_a: None
-        mock_urlopen.return_value.read = lambda: b""
-        _send_matrix(
-            "https://matrix.org", "tok", "!room:matrix.org",
-            "test message", "m.notice", "@kagetora:matrix.org",
-        )
-        req = mock_urlopen.call_args[0][0]
-        body = json.loads(req.data)
-        assert not body["body"].startswith("@kagetora")
-        assert body["msgtype"] == "m.notice"
-
-
-@pytest.mark.asyncio
-async def test_fanout_fires_both_backends(both_cfg: Config) -> None:
+async def test_fanout_fires_both_backends(mock_matrix_notifier, both_cfg: Config) -> None:
     from mcp_ashigaru.notify import _deliver
 
-    with (
-        patch("mcp_ashigaru.notify._send_webhook") as mock_wh,
-        patch("mcp_ashigaru.notify._send_matrix") as mock_mx,
-    ):
+    with patch("mcp_ashigaru.notify._send_webhook") as mock_wh:
         await _deliver("test", both_cfg)
         mock_wh.assert_called_once()
-        mock_mx.assert_called_once()
+        mock_matrix_notifier.send.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_fanout_tolerates_matrix_failure(both_cfg: Config) -> None:
     from mcp_ashigaru.notify import _deliver
 
+    mock = AsyncMock()
+    mock.send = AsyncMock(side_effect=OSError("connection refused"))
     with (
-        patch("mcp_ashigaru.notify._send_matrix", side_effect=OSError("connection refused")),
+        patch("mcp_ashigaru.notify._matrix_notifier", mock),
         patch("mcp_ashigaru.notify._send_webhook") as mock_wh,
     ):
         await _deliver("test", both_cfg)
@@ -223,12 +188,9 @@ async def test_fanout_tolerates_matrix_failure(both_cfg: Config) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fanout_tolerates_webhook_failure(both_cfg: Config) -> None:
+async def test_fanout_tolerates_webhook_failure(mock_matrix_notifier, both_cfg: Config) -> None:
     from mcp_ashigaru.notify import _deliver
 
-    with (
-        patch("mcp_ashigaru.notify._send_webhook", side_effect=OSError("connection refused")),
-        patch("mcp_ashigaru.notify._send_matrix") as mock_mx,
-    ):
+    with patch("mcp_ashigaru.notify._send_webhook", side_effect=OSError("connection refused")):
         await _deliver("test", both_cfg)
-        mock_mx.assert_called_once()
+        mock_matrix_notifier.send.assert_called_once()

@@ -38,7 +38,8 @@ LABEL name="mcp-ashigaru-crunchtools" \
 # Runtime tooling: python, git, gh, podman client, curl (for healthchecks).
 # gh comes from the official GitHub CLI dnf repo (arch-correct, GPG-verified).
 RUN curl -fsSL -o /etc/yum.repos.d/gh-cli.repo https://cli.github.com/packages/rpm/gh-cli.repo && \
-    microdnf install -y python3 python3-pip git podman-remote gh ca-certificates && \
+    microdnf install -y python3 python3-pip python3-devel gcc-c++ cmake make \
+        git podman-remote gh ca-certificates && \
     microdnf clean all && \
     ln -sf /usr/bin/podman-remote /usr/local/bin/podman
 
