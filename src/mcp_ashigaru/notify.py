@@ -68,6 +68,7 @@ class MatrixNotifier:
         await crypto_store.open()
 
         state_store = _AlwaysEncryptedStateStore()
+        self._client.state_store = state_store
         self._crypto = OlmMachine(
             client=self._client, crypto_store=crypto_store, state_store=state_store,
         )
