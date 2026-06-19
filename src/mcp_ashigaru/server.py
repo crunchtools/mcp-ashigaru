@@ -40,8 +40,26 @@ DEFAULT_PORT = 8020
 CFG = Config()
 
 
+def _recover_orphaned_runs(config: Config) -> None:
+    """Mark runs stuck in active phases as failed — they were orphaned by a restart."""
+    from .models import ACTIVE_PHASES
+    for run_info in RunState.list_all(config):
+        phase_str = run_info.get("phase", "")
+        try:
+            phase = Phase(phase_str)
+        except ValueError:
+            continue
+        if phase in ACTIVE_PHASES:
+            state = RunState.load(run_info["run_id"], config)
+            if state:
+                state.set_phase(Phase.FAILED, "Orphaned by server restart")
+                run_id = run_info["run_id"]
+                print(f"[ashigaru] Recovered orphaned run {run_id} ({phase_str} → failed)")
+
+
 @asynccontextmanager
 async def _lifespan(_server: FastMCP) -> AsyncIterator[None]:
+    _recover_orphaned_runs(CFG)
     await init_matrix(CFG)
     task = asyncio.create_task(heartbeat_loop(CFG))
     try:
