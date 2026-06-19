@@ -40,27 +40,15 @@ class MatrixNotifier:
         from pathlib import Path
 
         from mautrix.client import Client
-        from mautrix.crypto import MemoryCryptoStore, OlmMachine, StateStore
+        from mautrix.client.state_store.memory import MemoryStateStore
+        from mautrix.crypto import MemoryCryptoStore, OlmMachine
         from mautrix.types import (
             EncryptionAlgorithm,
+            Member,
+            Membership,
             RoomEncryptionStateEventContent,
             RoomID,
-            UserID,
         )
-
-        class _AlwaysEncryptedStateStore(StateStore):
-            async def is_encrypted(self, _room_id: RoomID) -> bool:
-                return True
-
-            async def get_encryption_info(
-                self, _room_id: RoomID,
-            ) -> RoomEncryptionStateEventContent | None:
-                return RoomEncryptionStateEventContent(
-                    algorithm=EncryptionAlgorithm.MEGOLM_V1,
-                )
-
-            async def find_shared_rooms(self, _user_id: UserID) -> list[RoomID]:
-                return []
 
         self._client = Client(
             base_url=self._homeserver,
@@ -92,10 +80,24 @@ class MatrixNotifier:
                 except Exception:
                     logger.warning("Failed to restore crypto state, starting fresh")
 
-        state_store = _AlwaysEncryptedStateStore()
+        state_store = MemoryStateStore()
+        room_id = RoomID(self._room_id)
+
+        await state_store.set_encryption_info(
+            room_id,
+            RoomEncryptionStateEventContent(algorithm=EncryptionAlgorithm.MEGOLM_V1),
+        )
+
+        joined = await self._client.get_joined_members(room_id)
+        members = {
+            uid: Member(membership=Membership.JOIN, displayname=info.displayname)
+            for uid, info in joined.items()
+        }
+        await state_store.set_members(room_id, members, only_membership=Membership.JOIN)  # type: ignore[arg-type]
+
         self._client.state_store = state_store
         self._crypto = OlmMachine(
-            client=self._client, crypto_store=crypto_store, state_store=state_store,
+            client=self._client, crypto_store=crypto_store, state_store=state_store,  # type: ignore[arg-type]
         )
         self._client.crypto = self._crypto
         await self._crypto.load()
@@ -124,7 +126,6 @@ class MatrixNotifier:
             }
             with open(self._pickle_path, "w") as f:
                 _json.dump(state, f)
-            logger.info("Saved Matrix crypto state to %s", self._pickle_path)
         except Exception:
             logger.exception("Failed to save crypto state")
 
@@ -169,12 +170,18 @@ class MatrixNotifier:
 
         try:
             encrypted = await self._crypto.encrypt_megolm_event(
-                content, room_id, EventType.ROOM_MESSAGE,
+                room_id, EventType.ROOM_MESSAGE, content,
             )
             await self._client.send_message_event(room_id, EventType.ROOM_ENCRYPTED, encrypted)
         except Exception:
-            logger.warning("E2EE send failed, falling back to plaintext")
-            await self._client.send_message_event(room_id, EventType.ROOM_MESSAGE, content)
+            logger.exception("E2EE send failed, sending plaintext via raw API")
+            from mautrix.api import Method, Path
+            txn = f"ashigaru-{int(asyncio.get_event_loop().time() * 1000)}"
+            await self._client.api.request(
+                Method.PUT,
+                Path.v3.rooms[room_id].send["m.room.message"][txn],
+                content.serialize(),
+            )
         await self._save_crypto_state()
 
 
