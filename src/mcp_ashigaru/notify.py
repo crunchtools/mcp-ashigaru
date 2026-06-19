@@ -200,7 +200,9 @@ async def init_matrix(config: Config) -> None:
     )
     try:
         await _matrix_notifier.start()
-    except Exception:
+        print(f"[ashigaru] Matrix E2EE notifier initialized: {_matrix_notifier._room_id}")  # noqa: T201
+    except Exception as exc:
+        print(f"[ashigaru] Failed to initialize Matrix notifier: {exc}")  # noqa: T201
         logger.exception("Failed to initialize Matrix notifier")
         _matrix_notifier = None
 
