@@ -98,8 +98,12 @@ class MatrixNotifier:
         )
         self._client.crypto = self._crypto
         await self._crypto.load()
-        if not self._crypto.account.shared:
-            await self._crypto.share_keys()
+        try:
+            if not self._crypto.account.shared:
+                await self._crypto.share_keys()
+        except Exception:
+            logger.warning("Key upload failed (stale server keys?), marking as shared")
+            self._crypto.account.shared = True
         await self._save_crypto_state()
 
         self._ready = True
