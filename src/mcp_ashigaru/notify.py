@@ -109,8 +109,15 @@ class MatrixNotifier:
             self._crypto.account.shared = True
         await self._save_crypto_state()
 
+        room_id = RoomID(self._room_id)
+        user_ids = list(joined.keys())
+        try:
+            await self._crypto.share_group_session(room_id, user_ids)
+        except Exception:
+            logger.warning("Failed to pre-create megolm session (will retry on first send)")
+
         self._ready = True
-        logger.info("Matrix E2EE notifier ready: %s", whoami.user_id)
+        print(f"[ashigaru] Matrix E2EE notifier ready: {whoami.user_id}")
 
     async def _save_crypto_state(self) -> None:
         if not self._pickle_path or not self._crypto:
