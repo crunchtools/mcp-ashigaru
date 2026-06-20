@@ -21,8 +21,7 @@ classifiers = [
 dependencies = [
     "fastmcp>=2.0",
     "pydantic>=2.0",
-    "mautrix[encryption]==0.21.0",
-    "aiosqlite==0.22.1",
+    "matrix-nio[e2e]>=0.24,<1.0",
 ]
 
 [project.optional-dependencies]
@@ -70,6 +69,11 @@ max-statements = 60
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S105", "S106", "PLC0415", "PLR2004"]
+
+[tool.mypy]
+[[tool.mypy.overrides]]
+module = "nio.*"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -20,104 +20,69 @@ _matrix_notifier: MatrixNotifier | None = None
 
 
 class MatrixNotifier:
-    """Persistent mautrix client with E2EE for sending Matrix notifications."""
+    """Persistent matrix-nio client with E2EE for sending Matrix notifications."""
 
     def __init__(self, homeserver: str, access_token: str, room_id: str,
-                 mention_user: str, device_id: str) -> None:
+                 mention_user: str, device_id: str, crypto_dir: str) -> None:
         self._homeserver = homeserver
         self._access_token = access_token
         self._room_id = room_id
         self._mention_user = mention_user
         self._device_id = device_id
+        self._crypto_dir = crypto_dir
         self._client: Any = None
-        self._crypto: Any = None
         self._ready = False
 
     async def start(self) -> None:
-        from mautrix.client import Client
-        from mautrix.client.state_store.memory import MemoryStateStore
-        from mautrix.crypto import MemoryCryptoStore, OlmMachine
-        from mautrix.types import (
-            EncryptionAlgorithm,
-            Member,
-            Membership,
-            RoomEncryptionStateEventContent,
-            RoomID,
+        from pathlib import Path
+
+        from nio import AsyncClient, AsyncClientConfig, WhoamiError
+
+        store_path = self._crypto_dir
+        if store_path:
+            Path(store_path).mkdir(parents=True, exist_ok=True)
+
+        config = AsyncClientConfig(
+            store_sync_tokens=True,
+            encryption_enabled=True,
         )
 
-        self._client = Client(
-            base_url=self._homeserver,
-            token=self._access_token,
-            device_id=self._device_id,
-        )
-        whoami = await self._client.whoami()
-        self._client.mxid = whoami.user_id
-
-        crypto_store = MemoryCryptoStore(account_id=str(whoami.user_id), pickle_key="ashigaru")
-        await crypto_store.open()
-
-        # MemoryCryptoStore starts fresh each time — device keys are re-uploaded
-        # and megolm sessions are re-created on startup via share_group_session().
-
-        state_store = MemoryStateStore()
-        room_id = RoomID(self._room_id)
-
-        await state_store.set_encryption_info(
-            room_id,
-            RoomEncryptionStateEventContent(algorithm=EncryptionAlgorithm.MEGOLM_V1),
+        self._client = AsyncClient(
+            homeserver=self._homeserver,
+            config=config,
+            store_path=store_path or "",
         )
 
-        joined = await self._client.get_joined_members(room_id)
-        members = {
-            uid: Member(membership=Membership.JOIN, displayname=info.displayname)
-            for uid, info in joined.items()
-        }
-        await state_store.set_members(room_id, members, only_membership=Membership.JOIN)  # type: ignore[arg-type]
+        self._client.access_token = self._access_token
+        self._client.device_id = self._device_id
 
-        self._client.state_store = state_store
-        self._crypto = OlmMachine(
-            client=self._client, crypto_store=crypto_store, state_store=state_store,  # type: ignore[arg-type]
+        resp = await self._client.whoami()
+        if isinstance(resp, WhoamiError):
+            msg = f"Matrix whoami failed: {resp.message}"
+            raise ConnectionError(msg)
+        self._client.user_id = resp.user_id
+
+        if store_path:
+            self._client.load_store()
+
+        await self._client.sync(
+            timeout=10000,
+            full_state=True,
+            sync_filter={"room": {"timeline": {"limit": 0}}},
         )
-        self._client.crypto = self._crypto
-        await self._crypto.load()
-        try:
-            await self._crypto.share_keys()
-        except Exception:
-            logger.warning("Key upload failed, marking as shared")
-            self._crypto.account.shared = True
-
-        room_id = RoomID(self._room_id)
-        user_ids = list(joined.keys())
-        try:
-            await self._crypto.share_group_session(room_id, user_ids)
-            print("[ashigaru] Megolm session created for ops room")
-        except Exception as exc:
-            print(f"[ashigaru] Failed to pre-create megolm session: {exc}")
 
         self._ready = True
-        print(f"[ashigaru] Matrix E2EE notifier ready: {whoami.user_id}")
-
-    async def _save_crypto_state(self) -> None:
-        pass
+        print(f"[ashigaru] Matrix E2EE notifier ready: {resp.user_id}")
 
     async def stop(self) -> None:
-        await self._save_crypto_state()
         if self._client:
-            await self._client.api.session.close()
+            await self._client.close()
         self._ready = False
 
     async def send(self, message: str, msgtype: str = "m.notice") -> None:
         if not self._ready or not self._client:
             logger.warning("Matrix notifier not ready, dropping message")
             return
-
-        from mautrix.types import (
-            EventType,
-            Format,
-            MessageType,
-            RoomID,
-            TextMessageEventContent,
-        )
 
         body = message
         formatted_body = message.replace("\n", "<br>")
@@ -130,30 +95,21 @@ class MatrixNotifier:
                 + formatted_body
             )
 
-        content = TextMessageEventContent(
-            msgtype=MessageType(msgtype),
-            body=body,
-            format=Format.HTML,
-            formatted_body=formatted_body,
-        )
-
-        room_id = RoomID(self._room_id)
+        content = {
+            "msgtype": msgtype,
+            "body": body,
+            "format": "org.matrix.custom.html",
+            "formatted_body": formatted_body,
+        }
 
         try:
-            encrypted = await self._crypto.encrypt_megolm_event(
-                room_id, EventType.ROOM_MESSAGE, content,
+            await self._client.room_send(
+                room_id=self._room_id,
+                message_type="m.room.message",
+                content=content,
             )
-            await self._client.send_message_event(room_id, EventType.ROOM_ENCRYPTED, encrypted)
         except Exception:
-            logger.exception("E2EE send failed, sending plaintext via raw API")
-            from mautrix.api import Method, Path
-            txn = f"ashigaru-{int(asyncio.get_event_loop().time() * 1000)}"
-            await self._client.api.request(
-                Method.PUT,
-                Path.v3.rooms[room_id].send["m.room.message"][txn],
-                content.serialize(),
-            )
-        await self._save_crypto_state()
+            logger.exception("Matrix send failed")
 
 
 async def init_matrix(config: Config) -> None:
@@ -166,6 +122,7 @@ async def init_matrix(config: Config) -> None:
         room_id=config.matrix_room_id,
         mention_user=config.matrix_mention_user,
         device_id=config.matrix_device_id,
+        crypto_dir=config.matrix_crypto_dir,
     )
     try:
         await _matrix_notifier.start()
