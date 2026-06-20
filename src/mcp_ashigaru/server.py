@@ -29,7 +29,7 @@ from . import runner
 from .config import Config
 from .git_ops import commit_and_push, merge_pr
 from .heartbeat import heartbeat_loop
-from .models import Activity, ActivityKind, Phase, RunMeta, Source
+from .models import ACTIVE_PHASES, Activity, ActivityKind, Phase, RunMeta, Source
 from .notify import init_matrix, shutdown_matrix
 from .slots import SlotManager
 from .state import RunState
@@ -632,6 +632,23 @@ async def api_run_detail(request: Request) -> JSONResponse:
     if state is None:
         return JSONResponse({"error": f"unknown run_id: {run_id}"}, status_code=404)
     return JSONResponse(state.get_detail())
+
+
+@mcp.custom_route("/api/runs/{run_id}", methods=["DELETE"])
+async def api_delete_run(request: Request) -> JSONResponse:
+    run_id = request.path_params["run_id"]
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return JSONResponse({"error": f"unknown run_id: {run_id}"}, status_code=404)
+    meta = state.read_meta()
+    if meta.phase in ACTIVE_PHASES:
+        return JSONResponse(
+            {"error": f"run {run_id!r} is active ({meta.phase.value}); cancel it first"},
+            status_code=409,
+        )
+    await preview_mod.teardown(run_id, CFG)
+    state.delete()
+    return JSONResponse({"deleted": True, "run_id": run_id})
 
 
 @mcp.custom_route("/api/runs/{run_id}/activity", methods=["GET"])
