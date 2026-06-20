@@ -39,7 +39,7 @@ LABEL name="mcp-ashigaru-crunchtools" \
 # gh comes from the official GitHub CLI dnf repo (arch-correct, GPG-verified).
 RUN curl -fsSL -o /etc/yum.repos.d/gh-cli.repo https://cli.github.com/packages/rpm/gh-cli.repo && \
     microdnf install -y python3 python3-pip python3-devel gcc-c++ cmake make \
-        libolm-devel git podman-remote gh ca-certificates && \
+        git podman-remote gh ca-certificates && \
     microdnf clean all && \
     ln -sf /usr/bin/podman-remote /usr/local/bin/podman
 
