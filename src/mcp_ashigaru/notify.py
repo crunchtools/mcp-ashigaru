@@ -42,19 +42,21 @@ class MatrixNotifier:
         if store_path:
             Path(store_path).mkdir(parents=True, exist_ok=True)
 
-        config = AsyncClientConfig(
+        client_config = AsyncClientConfig(
+            max_limit_exceeded=0,
+            max_timeouts=0,
             store_sync_tokens=True,
             encryption_enabled=True,
         )
 
         self._client = AsyncClient(
             homeserver=self._homeserver,
-            config=config,
+            device_id=self._device_id,
             store_path=store_path or "",
+            config=client_config,
         )
 
         self._client.access_token = self._access_token
-        self._client.device_id = self._device_id
 
         resp = await self._client.whoami()
         if isinstance(resp, WhoamiError):
@@ -64,6 +66,9 @@ class MatrixNotifier:
 
         if store_path:
             self._client.load_store()
+
+        if self._client.should_upload_keys:
+            await self._client.keys_upload()
 
         await self._client.sync(
             timeout=10000,
