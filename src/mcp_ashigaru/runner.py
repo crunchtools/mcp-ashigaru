@@ -152,6 +152,23 @@ async def _run_new_inner(
         timestamp=_now(), kind=ActivityKind.GIT_OP,
         summary=f"PR created: {pr_url}",
     ))
+
+    from .repo_config import get_repo_config
+    repo_cfg = get_repo_config(repo, config)
+    if repo_cfg.profile == "webapp":
+        from . import preview as preview_mod
+        result = await preview_mod.deploy(run_id, config)
+        if result.get("error"):
+            state.activity.append(Activity(
+                timestamp=_now(), kind=ActivityKind.PREVIEW_OP,
+                summary=f"Preview deploy failed: {result['error']}",
+            ))
+        else:
+            state.activity.append(Activity(
+                timestamp=_now(), kind=ActivityKind.PREVIEW_OP,
+                summary=f"Preview live: {result.get('preview_url', '')}",
+            ))
+
     state.set_phase(Phase.AWAITING_REVIEW, f"PR ready: {pr_url}")
 
 
