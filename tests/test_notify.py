@@ -30,12 +30,15 @@ def matrix_cfg(tmp_path: Path) -> Config:
     state_dir = tmp_path / "ashigaru"
     (state_dir / "runs").mkdir(parents=True)
     (state_dir / "work").mkdir(parents=True)
+    crypto_dir = tmp_path / "matrix-crypto"
+    crypto_dir.mkdir()
     return Config(
         state_dir=state_dir,
         matrix_homeserver="https://matrix.org",
         matrix_access_token="test-token",
         matrix_room_id="!test:matrix.org",
         matrix_mention_user="@kagetora:matrix.org",
+        matrix_crypto_dir=str(crypto_dir),
     )
 
 
@@ -44,6 +47,8 @@ def both_cfg(tmp_path: Path) -> Config:
     state_dir = tmp_path / "ashigaru"
     (state_dir / "runs").mkdir(parents=True)
     (state_dir / "work").mkdir(parents=True)
+    crypto_dir = tmp_path / "matrix-crypto"
+    crypto_dir.mkdir()
     return Config(
         state_dir=state_dir,
         notify_webhook="http://kagetora:8644/webhooks/ashigaru-complete",
@@ -52,6 +57,7 @@ def both_cfg(tmp_path: Path) -> Config:
         matrix_access_token="test-token",
         matrix_room_id="!test:matrix.org",
         matrix_mention_user="@kagetora:matrix.org",
+        matrix_crypto_dir=str(crypto_dir),
     )
 
 

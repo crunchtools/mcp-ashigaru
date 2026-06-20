@@ -16,7 +16,7 @@
 #     --user 1000:1000 \
 #     -e CONTAINER_HOST=unix:///run/podman/podman.sock \
 #     -v /run/user/1000/podman/podman.sock:/run/podman/podman.sock \
-#     -v /home/devrunner/ashigaru:/home/devrunner/ashigaru:z \
+#     -v /home/devrunner/ashigaru:/home/devrunner/ashigaru:z \   (includes matrix-crypto/ for persistent E2EE keys)
 #     --env-file /srv/mcp-ashigaru.crunchtools.com/config/mcp-ashigaru.env \
 #     quay.io/crunchtools/mcp-ashigaru \
 #     --transport streamable-http --host 0.0.0.0 --port 8020
@@ -39,7 +39,7 @@ LABEL name="mcp-ashigaru-crunchtools" \
 # gh comes from the official GitHub CLI dnf repo (arch-correct, GPG-verified).
 RUN curl -fsSL -o /etc/yum.repos.d/gh-cli.repo https://cli.github.com/packages/rpm/gh-cli.repo && \
     microdnf install -y python3 python3-pip python3-devel gcc-c++ cmake make \
-        git podman-remote gh ca-certificates && \
+        libolm-devel git podman-remote gh ca-certificates && \
     microdnf clean all && \
     ln -sf /usr/bin/podman-remote /usr/local/bin/podman
 
@@ -49,9 +49,10 @@ COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
 RUN python3 -m pip install --no-cache-dir . && \
-    python3 -c "from mcp_ashigaru import main; print('Installation verified')"
+    python3 -c "from mcp_ashigaru import main; from nio import AsyncClient; print('Installation verified')"
 
-RUN mkdir -p /home/devrunner && chown 1000:1000 /home/devrunner
+RUN mkdir -p /home/devrunner/ashigaru/matrix-crypto && \
+    chown -R 1000:1000 /home/devrunner
 ENV HOME=/home/devrunner \
     ASHIGARU_STATE_DIR=/home/devrunner/ashigaru \
     PYTHONUNBUFFERED=1
