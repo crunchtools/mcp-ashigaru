@@ -107,6 +107,7 @@ class MatrixNotifier:
                 room_id=self._room_id,
                 message_type="m.room.message",
                 content=content,
+                ignore_unverified_devices=True,
             )
         except Exception:
             logger.exception("Matrix send failed")
