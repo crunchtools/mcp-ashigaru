@@ -169,6 +169,14 @@ class RunState:
             "brief": self.read_brief()[:500],
         }
 
+    def delete(self) -> None:
+        import shutil
+        if self._config is not None:
+            work_dir = self._config.work_dir / self._dir.name
+            if work_dir.exists():
+                shutil.rmtree(work_dir, ignore_errors=True)
+        shutil.rmtree(self._dir, ignore_errors=True)
+
     def get_log(self, log_name: str | None = None, max_bytes: int = 50_000) -> str:
         if log_name:
             p = self._dir / log_name
