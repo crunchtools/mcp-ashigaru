@@ -84,6 +84,9 @@ class RunState:
             phase_before=old_phase,
             phase_after=phase,
         ))
+        if phase in (Phase.FAILED, Phase.ESCALATED, Phase.CANCELLED) and meta.branch:
+            self._cleanup_remote_branch(meta)
+
         if (
             self._config
             and old_phase != phase
@@ -94,6 +97,19 @@ class RunState:
             )
         ):
             fire_phase_change(meta, old_phase, phase, self._config)
+
+    def _cleanup_remote_branch(self, meta: RunMeta) -> None:
+        if not self._config or not meta.branch:
+            return
+        import asyncio
+
+        from .git_ops import delete_remote_branch
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(delete_remote_branch(meta.repo, meta.branch, self._config))
+        except RuntimeError:
+            pass
 
     def update_meta(self, **fields: Any) -> None:
         meta = self.read_meta()

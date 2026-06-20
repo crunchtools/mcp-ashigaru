@@ -149,6 +149,16 @@ async def merge_pr(repo: str, pr: int, config: Config) -> tuple[bool, str]:
     return rc == 0, out[-500:]
 
 
+async def delete_remote_branch(repo: str, branch: str, config: Config) -> bool:
+    env = {"GH_TOKEN": config.gh_token}
+    rc, _ = await _run(
+        "gh", "api", "-X", "DELETE",
+        f"repos/{config.org}/{repo}/git/refs/heads/{branch}",
+        env=env,
+    )
+    return rc == 0
+
+
 async def get_prior_diff(repodir: Path, max_lines: int = 200) -> str:
     _, out = await _run("git", "diff", "HEAD~1..HEAD", cwd=repodir)
     lines = out.splitlines()
