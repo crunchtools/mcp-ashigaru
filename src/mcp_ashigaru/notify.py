@@ -295,6 +295,8 @@ def fire_phase_change(
     ]
     if new_phase.value == "failed" and meta.failure_reason:
         lines.append(f"Error: {meta.failure_reason}")
+    if new_phase.value in ("failed", "escalated", "cancelled"):
+        lines.append("DO NOT restart this run. Notify Scott and wait for instructions.")
     if new_phase.value == "awaiting-review" and meta.pr_url:
         lines.append(f"PR: {meta.pr_url}")
     message = "\n".join(lines)
