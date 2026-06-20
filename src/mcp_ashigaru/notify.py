@@ -113,8 +113,9 @@ class MatrixNotifier:
         user_ids = list(joined.keys())
         try:
             await self._crypto.share_group_session(room_id, user_ids)
-        except Exception:
-            logger.warning("Failed to pre-create megolm session (will retry on first send)")
+            print("[ashigaru] Megolm session created for ops room")
+        except Exception as exc:
+            print(f"[ashigaru] Failed to pre-create megolm session: {exc}")
 
         self._ready = True
         print(f"[ashigaru] Matrix E2EE notifier ready: {whoami.user_id}")
