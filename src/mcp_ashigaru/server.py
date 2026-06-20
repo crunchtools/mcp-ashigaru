@@ -165,7 +165,9 @@ async def _clone_and_prepare(run_id: str, repo: str, config: Config) -> None:
         timestamp=_now(), kind=ActivityKind.GIT_OP,
         summary=f"Cloned and branched: {meta.branch}",
     ))
-    state.set_phase(Phase.QUEUED, "Clone complete, awaiting dispatch")
+    meta = state.read_meta()
+    if meta.phase == Phase.CLONING:
+        state.set_phase(Phase.QUEUED, "Clone complete, awaiting dispatch")
 
 
 @mcp.tool()

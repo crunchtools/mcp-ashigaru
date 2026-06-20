@@ -76,12 +76,12 @@ def _make_meta(phase: Phase, **kwargs) -> RunMeta:
     return RunMeta(**defaults)
 
 
-def test_fire_phase_change_formats_message(webhook_cfg: Config) -> None:
+def test_fire_phase_change_skips_nonterminal(webhook_cfg: Config) -> None:
     meta = _make_meta(Phase.ANALYZING)
     with patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop:
         mock_task = mock_loop.return_value.create_task
         fire_phase_change(meta, Phase.QUEUED, Phase.ANALYZING, webhook_cfg)
-        mock_task.assert_called_once()
+        mock_task.assert_not_called()
 
 
 def test_fire_phase_change_includes_failure_reason(webhook_cfg: Config) -> None:
@@ -152,15 +152,14 @@ async def test_terminal_phase_uses_m_text(mock_matrix_notifier) -> None:
 
 
 @pytest.mark.asyncio
-async def test_nonterminal_phase_uses_m_notice(mock_matrix_notifier) -> None:
+async def test_nonterminal_phase_skips_notification(mock_matrix_notifier) -> None:
     cfg = Config(state_dir=Path("/tmp/test"))  # noqa: S108
     meta = _make_meta(Phase.ANALYZING)
     with patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop:
         mock_loop.return_value.create_task = asyncio.ensure_future
         fire_phase_change(meta, Phase.QUEUED, Phase.ANALYZING, cfg)
         await asyncio.sleep(0.1)
-        mock_matrix_notifier.send.assert_called_once()
-        assert mock_matrix_notifier.send.call_args[0][1] == "m.notice"
+        mock_matrix_notifier.send.assert_not_called()
 
 
 @pytest.mark.asyncio

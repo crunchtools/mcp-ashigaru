@@ -299,11 +299,12 @@ def fire_phase_change(
         lines.append(f"PR: {meta.pr_url}")
     message = "\n".join(lines)
 
-    msgtype = "m.text" if new_phase in TERMINAL_PHASES else "m.notice"
+    if new_phase not in TERMINAL_PHASES:
+        return
 
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_deliver(message, config, msgtype))
+        loop.create_task(_deliver(message, config, "m.text"))
     except RuntimeError:
         pass
 
