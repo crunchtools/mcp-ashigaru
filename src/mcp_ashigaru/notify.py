@@ -288,9 +288,9 @@ def fire_phase_change(
 
     repo_issue = f"{meta.repo} #{meta.issue}"
     title = meta.title or repo_issue
+    status = f"{old_phase.value} to {new_phase.value}"
     lines = [
-        f"Phase change: {old_phase.value} → {new_phase.value}",
-        f"Run {meta.run_id} ({repo_issue})",
+        f"Run {meta.run_id} ({repo_issue}) has changed from {status}.",
         title,
     ]
     if new_phase.value == "failed" and meta.failure_reason:
