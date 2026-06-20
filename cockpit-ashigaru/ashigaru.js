@@ -21,6 +21,15 @@
         });
     }
 
+    function apiDelete(path) {
+        return new Promise(function (resolve, reject) {
+            var http = new cockpit.http({ port: 8020, address: "localhost" });
+            http.request({ method: "DELETE", path: path, body: "" })
+                .then(function (data) { resolve(data ? JSON.parse(data) : {}); })
+                .catch(function (err) { reject(err); });
+        });
+    }
+
     function phaseBadge(phase) {
         var cls = "ashigaru-phase-" + (phase || "unknown").replace(/_/g, "-");
         return '<span class="pf-v6-c-label pf-m-compact ' + cls + '">' +
@@ -84,10 +93,10 @@
             '</div>' +
             '<table class="pf-v6-c-table pf-m-compact pf-m-grid-md" id="runs-table">' +
             '<thead><tr>' +
-            '<th>Title</th><th>Repo</th><th>Issue</th><th>Phase</th>' +
-            '<th>Source</th><th>Tier</th><th>PR</th><th>Created</th>' +
+            '<th>Title</th><th>Run ID</th><th>Repo</th><th>Issue</th><th>Phase</th>' +
+            '<th>Source</th><th>Tier</th><th>PR</th><th>Created</th><th></th>' +
             '</tr></thead>' +
-            '<tbody id="runs-tbody"><tr><td colspan="8">Loading...</td></tr></tbody>' +
+            '<tbody id="runs-tbody"><tr><td colspan="10">Loading...</td></tr></tbody>' +
             '</table>' +
             '</section></main></div>';
 
@@ -111,9 +120,10 @@
             var tbody = document.getElementById("runs-tbody");
             if (!tbody) return;
             if (!data || data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8">No runs found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10">No runs found</td></tr>';
                 return;
             }
+            var DELETABLE = {"failed": true, "cancelled": true, "shipped": true};
             var html = "";
             for (var i = 0; i < data.length; i++) {
                 var r = data[i];
@@ -121,8 +131,12 @@
                 var prLink = r.pr_url
                     ? '<a href="' + escapeHtml(r.pr_url) + '" target="_blank">#' + r.pr_url.split("/").pop() + '</a>'
                     : "";
+                var deleteBtn = DELETABLE[r.phase]
+                    ? '<button class="pf-v6-c-button pf-m-plain pf-m-small ashigaru-delete-btn" data-run-id="' + escapeHtml(r.run_id) + '" title="Delete run">&#x1F5D1;</button>'
+                    : "";
                 html += '<tr class="pf-v6-c-table__tr ashigaru-run-row" data-run-id="' + escapeHtml(r.run_id) + '">' +
                     '<td class="pf-v6-c-table__td ashigaru-title-cell">' + escapeHtml(titleDisplay) + '</td>' +
+                    '<td class="pf-v6-c-table__td"><code class="ashigaru-run-id">' + escapeHtml(r.run_id) + '</code></td>' +
                     '<td class="pf-v6-c-table__td">' + escapeHtml(r.repo || "") + '</td>' +
                     '<td class="pf-v6-c-table__td">#' + (r.issue || "") + '</td>' +
                     '<td class="pf-v6-c-table__td">' + phaseBadge(r.phase) + '</td>' +
@@ -130,6 +144,7 @@
                     '<td class="pf-v6-c-table__td">' + (r.current_tier || "") + '</td>' +
                     '<td class="pf-v6-c-table__td">' + prLink + '</td>' +
                     '<td class="pf-v6-c-table__td">' + formatTime(r.created) + '</td>' +
+                    '<td class="pf-v6-c-table__td">' + deleteBtn + '</td>' +
                     '</tr>';
             }
             tbody.innerHTML = html;
@@ -140,9 +155,20 @@
                     renderDetailPage(this.dataset.runId);
                 });
             }
+            var deleteBtns = tbody.querySelectorAll(".ashigaru-delete-btn");
+            for (var k = 0; k < deleteBtns.length; k++) {
+                deleteBtns[k].addEventListener("click", function (e) {
+                    e.stopPropagation();
+                    var runId = this.dataset.runId;
+                    if (!window.confirm("Delete run " + runId + "?")) return;
+                    apiDelete("/api/runs/" + encodeURIComponent(runId))
+                        .then(function () { loadRuns(); })
+                        .catch(function (err) { window.alert("Delete failed: " + String(err)); });
+                });
+            }
         }).catch(function (err) {
             var tbody = document.getElementById("runs-tbody");
-            if (tbody) tbody.innerHTML = '<tr><td colspan="8">Error: ' + escapeHtml(String(err)) + '</td></tr>';
+            if (tbody) tbody.innerHTML = '<tr><td colspan="10">Error: ' + escapeHtml(String(err)) + '</td></tr>';
         });
     }
 

@@ -634,6 +634,25 @@ async def api_run_detail(request: Request) -> JSONResponse:
     return JSONResponse(state.get_detail())
 
 
+_DELETABLE_PHASES = {Phase.FAILED, Phase.CANCELLED, Phase.SHIPPED}
+
+
+@mcp.custom_route("/api/runs/{run_id}", methods=["DELETE"])
+async def api_delete_run(request: Request) -> JSONResponse:
+    run_id = request.path_params["run_id"]
+    state = RunState.load(run_id, CFG)
+    if state is None:
+        return JSONResponse({"error": f"unknown run_id: {run_id}"}, status_code=404)
+    meta = state.read_meta()
+    if meta.phase not in _DELETABLE_PHASES:
+        return JSONResponse(
+            {"error": f"run {run_id} is in phase '{meta.phase}', only failed/cancelled/shipped runs may be deleted"},
+            status_code=409,
+        )
+    state.delete()
+    return JSONResponse({"deleted": run_id})
+
+
 @mcp.custom_route("/api/runs/{run_id}/activity", methods=["GET"])
 async def api_run_activity(request: Request) -> JSONResponse:
     run_id = request.path_params["run_id"]

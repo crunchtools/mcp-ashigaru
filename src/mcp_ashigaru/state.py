@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,9 @@ class RunState:
         if not (run_dir / "meta.json").exists():
             return None
         return cls(run_dir, config)
+
+    def delete(self) -> None:
+        shutil.rmtree(self._dir, ignore_errors=True)
 
     @property
     def run_dir(self) -> Path:
