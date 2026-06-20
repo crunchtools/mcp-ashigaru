@@ -53,7 +53,8 @@ RUN python3 -m pip install --no-cache-dir . && \
 
 RUN mkdir -p /home/devrunner && chown 1000:1000 /home/devrunner
 ENV HOME=/home/devrunner \
-    ASHIGARU_STATE_DIR=/home/devrunner/ashigaru
+    ASHIGARU_STATE_DIR=/home/devrunner/ashigaru \
+    PYTHONUNBUFFERED=1
 USER 1000
 
 EXPOSE 8020
