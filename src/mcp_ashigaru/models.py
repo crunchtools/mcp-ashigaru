@@ -123,6 +123,7 @@ class GateConfig(BaseModel):
     name: str
     image: str
     env_file: str = ""
+    args: list[str] = []
 
 
 class RepoConfig(BaseModel):
