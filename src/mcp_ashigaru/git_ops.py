@@ -49,6 +49,8 @@ async def clone(
     url = f"https://x-access-token:{config.gh_token}@github.com/{config.org}/{repo}.git"
     rc, _ = await _run("git", "clone", "--depth", "50", url, str(target), log_path=log_path)
     if rc == 0:
+        clean_url = f"https://github.com/{config.org}/{repo}.git"
+        await _run("git", "remote", "set-url", "origin", clean_url, cwd=target)
         await _run("chown", "-R", "1000:1000", str(target))
     return rc == 0
 

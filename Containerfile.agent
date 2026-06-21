@@ -47,8 +47,9 @@ RUN python3 -m pip install --no-cache-dir uv
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_VERSION} \
     && claude --version
 
-# Non-root user matching the dispatcher's -e HOME=/home/user
-RUN mkdir -p /home/user && chown 1000:1000 /home/user
+# Non-root user with proper passwd entry (some tools need it).
+# UID 1000 matches the chown in git_ops.py clone().
+RUN useradd -u 1000 -m -d /home/user -s /bin/bash user
 USER 1000
 WORKDIR /work
 
