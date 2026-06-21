@@ -31,6 +31,28 @@ async def _build_image(
     return rc == 0
 
 
+async def _prune_images(
+    config: Config, repo: str, issue: int, run_id: str, log_path: Path,
+) -> None:
+    """Remove dangling layers and stale preview images for this repo+issue."""
+    await _hpodman(config, "image", "prune", "-f", log_path=log_path)
+
+    keep = f"localhost/ashigaru-preview-{run_id}"
+    prefix = f"localhost/ashigaru-preview-{repo}-{issue}-"
+    rc, output = await _hpodman(
+        config, "images", "--format", "{{.Repository}}", capture=True,
+    )
+    if rc != 0:
+        return
+    stale = {
+        line.strip()
+        for line in output.splitlines()
+        if line.strip().startswith(prefix) and line.strip() != keep
+    }
+    for repository in stale:
+        await _hpodman(config, "rmi", "-f", f"{repository}:latest", log_path=log_path)
+
+
 async def _seed_db(
     config: Config, lock: SlotLock, repo_cfg: RepoConfig, _log_path: Path,
 ) -> None:
@@ -159,6 +181,8 @@ async def deploy(run_id: str, config: Config) -> dict[str, Any]:
         await slot_mgr.release(run_id)
         state.set_phase(Phase.FAILED, "Preview image build failed")
         return {"error": "image build failed", "run_id": run_id}
+
+    await _prune_images(config, meta.repo, meta.issue, run_id, log_path)
 
     await _seed_db(config, lock, repo_cfg, log_path)
 
