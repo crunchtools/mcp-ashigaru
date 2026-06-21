@@ -92,6 +92,7 @@ class RunMeta(BaseModel):
     gate: str | None = None
     failure_reason: str | None = None
     session_id: str | None = None
+    matrix_thread_id: str | None = None
     attempts: list[Attempt] = []
     created: str = ""
     updated: str = ""

@@ -11,6 +11,8 @@ import shlex
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from .config import Config
     from .models import Phase, RunMeta
 
@@ -84,10 +86,12 @@ class MatrixNotifier:
             await self._client.close()
         self._ready = False
 
-    async def send(self, message: str, msgtype: str = "m.notice") -> None:
+    async def send(
+        self, message: str, msgtype: str = "m.notice", thread_id: str | None = None,
+    ) -> str | None:
         if not self._ready or not self._client:
             logger.warning("Matrix notifier not ready, dropping message")
-            return
+            return None
 
         body = message
         formatted_body = message.replace("\n", "<br>")
@@ -100,22 +104,30 @@ class MatrixNotifier:
                 + formatted_body
             )
 
-        content = {
+        content: dict[str, Any] = {
             "msgtype": msgtype,
             "body": body,
             "format": "org.matrix.custom.html",
             "formatted_body": formatted_body,
         }
 
+        if thread_id:
+            content["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_id,
+            }
+
         try:
-            await self._client.room_send(
+            resp = await self._client.room_send(
                 room_id=self._room_id,
                 message_type="m.room.message",
                 content=content,
                 ignore_unverified_devices=True,
             )
+            return getattr(resp, "event_id", None)
         except Exception:
             logger.exception("Matrix send failed")
+            return None
 
 
 async def init_matrix(config: Config) -> None:
@@ -191,10 +203,13 @@ async def _send_cmd(cmd: str, message: str) -> None:
         )
 
 
-async def _deliver(message: str, config: Config, msgtype: str = "m.notice") -> None:
+async def _deliver(
+    message: str, config: Config, msgtype: str = "m.notice", thread_id: str | None = None,
+) -> str | None:
+    event_id: str | None = None
     if _matrix_notifier:
         try:
-            await _matrix_notifier.send(message, msgtype)
+            event_id = await _matrix_notifier.send(message, msgtype, thread_id)
         except Exception:
             logger.exception("Matrix notification failed")
 
@@ -212,9 +227,15 @@ async def _deliver(message: str, config: Config, msgtype: str = "m.notice") -> N
         except Exception:
             logger.exception("Command notification failed")
 
+    return event_id
+
 
 def fire_phase_change(
-    meta: RunMeta, old_phase: Phase, new_phase: Phase, config: Config,
+    meta: RunMeta,
+    old_phase: Phase,
+    new_phase: Phase,
+    config: Config,
+    on_thread_created: Callable[[str], None] | None = None,
 ) -> None:
     from .models import TERMINAL_PHASES
 
@@ -236,9 +257,16 @@ def fire_phase_change(
     if new_phase not in TERMINAL_PHASES:
         return
 
+    thread_id = meta.matrix_thread_id
+
+    async def _run() -> None:
+        event_id = await _deliver(message, config, "m.text", thread_id)
+        if thread_id is None and event_id and on_thread_created:
+            on_thread_created(event_id)
+
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_deliver(message, config, "m.text"))
+        loop.create_task(_run())
     except RuntimeError:
         pass
 
@@ -248,7 +276,7 @@ async def send_heartbeat(
 ) -> None:
     message = _format_heartbeat(meta, elapsed_minutes, last_activity)
     try:
-        await _deliver(message, config, msgtype="m.notice")
+        await _deliver(message, config, msgtype="m.notice", thread_id=meta.matrix_thread_id)
     except TimeoutError:
         logger.warning("Heartbeat notification timed out")
     except Exception:

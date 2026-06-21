@@ -96,7 +96,15 @@ class RunState:
                 or (self._config.matrix_homeserver and self._config.matrix_room_id)
             )
         ):
-            fire_phase_change(meta, old_phase, phase, self._config)
+            fire_phase_change(
+                meta,
+                old_phase,
+                phase,
+                self._config,
+                on_thread_created=lambda event_id: self.update_meta(
+                    matrix_thread_id=event_id,
+                ),
+            )
 
     def _cleanup_remote_branch(self, meta: RunMeta) -> None:
         if not self._config or not meta.branch:
