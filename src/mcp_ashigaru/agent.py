@@ -92,27 +92,49 @@ async def run_sealed_agent(
     max_turns: int,
     config: Config,
     effort: str = "high",
+    session_id: str | None = None,
+    resume_session: bool = False,
 ) -> int:
     events_path = run_dir / "events.jsonl"
     agent_err = run_dir / "agent.err"
+
+    # Persist session subdirs only — mounting the whole ~/.claude/ shadows
+    # Claude Code's config initialization and breaks startup.
+    state_dir = run_dir / "claude-state"
+    projects_dir = state_dir / "projects"
+    sessions_dir = state_dir / "sessions"
+    projects_dir.mkdir(parents=True, exist_ok=True)
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+
+    claude_args: list[str] = ["claude"]
+    if resume_session and session_id:
+        claude_args += ["--resume", session_id, "-p", prompt]
+    elif session_id:
+        claude_args += ["--session-id", session_id, "-p", prompt]
+    else:
+        claude_args += ["-p", prompt]
+    claude_args += [
+        "--model", model,
+        "--effort", effort,
+        "--permission-mode", "dontAsk",
+        "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep",
+        "--max-turns", str(max_turns),
+        "--output-format", "stream-json",
+        "--verbose",
+    ]
 
     with events_path.open("a") as events_f, agent_err.open("a") as err_f:
         proc = await asyncio.create_subprocess_exec(
             "podman", "run", "--rm",
             "--user", "0:0",
             "-v", f"{repodir}:/work:z",
+            "-v", f"{projects_dir}:/home/user/.claude/projects:z",
+            "-v", f"{sessions_dir}:/home/user/.claude/sessions:z",
             "-w", "/work",
             "-e", f"CLAUDE_CODE_OAUTH_TOKEN={config.claude_token}",
             "-e", "HOME=/home/user",
             config.agent_image,
-            "claude", "-p", prompt,
-            "--model", model,
-            "--effort", effort,
-            "--permission-mode", "dontAsk",
-            "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep",
-            "--max-turns", str(max_turns),
-            "--output-format", "stream-json",
-            "--verbose",
+            *claude_args,
             stdout=events_f,
             stderr=err_f,
         )
