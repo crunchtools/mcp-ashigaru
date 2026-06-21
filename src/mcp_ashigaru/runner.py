@@ -235,7 +235,7 @@ async def _run_iterate_inner(
     )
     effort = tier_effort(next_tier)
     await run_sealed_agent(repodir, state.run_dir, prompt, model, max_turns, config,
-                           effort=effort, is_iteration=True)
+                           effort=effort)
     classifier.cancel()
 
     gate_result, gate_output = await check_gate(repodir)
