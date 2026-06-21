@@ -74,10 +74,11 @@ def build_iteration_prompt(
         f"{feedback or 'No specific feedback — prior attempt failed the gate.'}\n\n"
         f"GATE FAILURE REASON:\n{last_gate_output or 'Unknown'}\n\n"
         f"INSTRUCTIONS:\n"
-        f"1. Run `git log --oneline -3` to see what is already committed.\n"
-        f"2. Read the files that need ADDITIONAL changes. The prior diff above "
-        f"shows what is DONE — focus on what the feedback says is STILL WRONG.\n"
-        f"3. Make NEW edits only. Keep changes minimal and focused.\n"
+        f"1. The diff above shows what is ALREADY COMMITTED. Do not re-apply "
+        f"any of those changes — they are done.\n"
+        f"2. The FEEDBACK section tells you what ADDITIONAL work is needed. "
+        f"Read the relevant files and make ONLY the new changes described.\n"
+        f"3. You MUST edit at least one file or the gate will fail.\n"
         f"4. You can Read/Edit/Write/Bash/Glob/Grep. Use Bash to verify. "
         f"No network or git access.\n"
         f"End with a short summary: what NEW changes you made this iteration."
@@ -92,51 +93,27 @@ async def run_sealed_agent(
     max_turns: int,
     config: Config,
     effort: str = "high",
-    session_id: str | None = None,
-    resume_session: bool = False,
 ) -> int:
     events_path = run_dir / "events.jsonl"
     agent_err = run_dir / "agent.err"
-
-    # Persist session subdirs only — mounting the whole ~/.claude/ shadows
-    # Claude Code's config initialization and breaks startup.
-    state_dir = run_dir / "claude-state"
-    projects_dir = state_dir / "projects"
-    sessions_dir = state_dir / "sessions"
-    projects_dir.mkdir(parents=True, exist_ok=True)
-    sessions_dir.mkdir(parents=True, exist_ok=True)
-
-    # ENTRYPOINT is ["claude"] — do NOT prepend "claude" here or the
-    # arg parser sees a positional that swallows the -p prompt.
-    claude_args: list[str] = []
-    if resume_session and session_id:
-        claude_args += ["--resume", session_id, "-p", prompt]
-    elif session_id:
-        claude_args += ["--session-id", session_id, "-p", prompt]
-    else:
-        claude_args += ["-p", prompt]
-    claude_args += [
-        "--model", model,
-        "--effort", effort,
-        "--permission-mode", "dontAsk",
-        "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep",
-        "--max-turns", str(max_turns),
-        "--output-format", "stream-json",
-        "--verbose",
-    ]
 
     with events_path.open("a") as events_f, agent_err.open("a") as err_f:
         proc = await asyncio.create_subprocess_exec(
             "podman", "run", "--rm",
             "--user", "0:0",
             "-v", f"{repodir}:/work:z",
-            "-v", f"{projects_dir}:/home/user/.claude/projects:z",
-            "-v", f"{sessions_dir}:/home/user/.claude/sessions:z",
             "-w", "/work",
             "-e", f"CLAUDE_CODE_OAUTH_TOKEN={config.claude_token}",
             "-e", "HOME=/home/user",
             config.agent_image,
-            *claude_args,
+            "-p", prompt,
+            "--model", model,
+            "--effort", effort,
+            "--permission-mode", "dontAsk",
+            "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep",
+            "--max-turns", str(max_turns),
+            "--output-format", "stream-json",
+            "--verbose",
             stdout=events_f,
             stderr=err_f,
         )

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -98,9 +97,8 @@ async def _run_new_inner(
     max_turns = tier_max_turns(start_tier)
     prompt = build_initial_prompt(repo, issue, brief)
 
-    sid = str(uuid.uuid4())
     state.set_phase(Phase.ANALYZING, f"Agent starting (tier {start_tier}, {actual_model})")
-    state.update_meta(model=actual_model, current_tier=start_tier, session_id=sid)
+    state.update_meta(model=actual_model, current_tier=start_tier)
 
     classifier = asyncio.create_task(
         _classify_events_live(state, state.run_dir / "events.jsonl")
@@ -108,7 +106,7 @@ async def _run_new_inner(
     effort = tier_effort(start_tier)
     exit_code = await run_sealed_agent(
         repodir, state.run_dir, prompt, actual_model, max_turns, config,
-        effort=effort, session_id=sid,
+        effort=effort,
     )
     classifier.cancel()
 
@@ -229,7 +227,6 @@ async def _run_iterate_inner(
 
     prompt = build_iteration_prompt(repo, meta.issue, brief, feedback, prior_diff, last_gate)
 
-    sid = meta.session_id
     state.set_phase(Phase.ANALYZING, f"Iterating (tier {next_tier}, {model})")
     state.update_meta(current_tier=next_tier)
 
@@ -238,8 +235,7 @@ async def _run_iterate_inner(
     )
     effort = tier_effort(next_tier)
     await run_sealed_agent(repodir, state.run_dir, prompt, model, max_turns, config,
-                           effort=effort, session_id=sid,
-                           resume_session=bool(sid))
+                           effort=effort)
     classifier.cancel()
 
     gate_result, gate_output = await check_gate(repodir)
