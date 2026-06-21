@@ -300,6 +300,8 @@ async def deploy_preview(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "status": "deploying"}
 
 
+_ITERABLE_PHASES = {Phase.FAILED, Phase.AWAITING_REVIEW}
+
 @mcp.tool()
 async def request_changes(run_id: str, notes: str = "") -> dict[str, Any]:
     """Re-invoke worker with feedback. Escalates model tier unless notes provided."""
@@ -307,10 +309,18 @@ async def request_changes(run_id: str, notes: str = "") -> dict[str, Any]:
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
 
+    meta = state.read_meta()
+    if meta.phase not in _ITERABLE_PHASES:
+        return {
+            "error": f"cannot iterate: run is in phase '{meta.phase.value}' "
+            f"(must be 'failed' or 'awaiting-review')",
+            "run_id": run_id,
+            "phase": meta.phase.value,
+        }
+
     if notes:
         state.write_feedback(notes)
 
-    meta = state.read_meta()
     asyncio.create_task(runner.run_iterate(run_id, notes, CFG))
 
     return {
