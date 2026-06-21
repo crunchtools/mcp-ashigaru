@@ -60,19 +60,27 @@ def build_iteration_prompt(
     last_gate_output: str,
 ) -> str:
     return (
+        f"CRITICAL: YOUR PRIOR CHANGES ARE ALREADY COMMITTED. "
+        f"The working tree is CLEAN — there is nothing to re-apply.\n"
+        f"Only NEW edits to files will pass the gate. If you re-apply the same "
+        f"edits that are already committed, `git diff` will show nothing and "
+        f"the gate will fail with 'No files modified.'\n\n"
         f"You are iterating on GitHub issue #{issue} in the {repo} repository "
         f"(crunchtools fleet).\n\n"
         f"ORIGINAL TASK:\n{brief}\n\n"
-        f"YOUR PRIOR ATTEMPT (diff of what was changed):\n{prior_diff}\n\n"
-        f"FEEDBACK FROM REVIEWER:\n"
+        f"WHAT WAS ALREADY DONE (committed — do NOT repeat these changes):\n"
+        f"{prior_diff}\n\n"
+        f"FEEDBACK FROM REVIEWER (what still needs fixing):\n"
         f"{feedback or 'No specific feedback — prior attempt failed the gate.'}\n\n"
         f"GATE FAILURE REASON:\n{last_gate_output or 'Unknown'}\n\n"
         f"INSTRUCTIONS:\n"
-        f"1. Read the relevant code to understand what was already changed and what went wrong.\n"
-        f"2. Fix the issues described in the feedback. Keep changes minimal and focused.\n"
-        f"3. You can Read/Edit/Write/Bash/Glob/Grep. Use Bash to verify your changes. "
+        f"1. Run `git log --oneline -3` to see what is already committed.\n"
+        f"2. Read the files that need ADDITIONAL changes. The prior diff above "
+        f"shows what is DONE — focus on what the feedback says is STILL WRONG.\n"
+        f"3. Make NEW edits only. Keep changes minimal and focused.\n"
+        f"4. You can Read/Edit/Write/Bash/Glob/Grep. Use Bash to verify. "
         f"No network or git access.\n"
-        f"End with a short summary: what you fixed this iteration."
+        f"End with a short summary: what NEW changes you made this iteration."
     )
 
 
@@ -84,27 +92,40 @@ async def run_sealed_agent(
     max_turns: int,
     config: Config,
     effort: str = "high",
+    is_iteration: bool = False,
 ) -> int:
     events_path = run_dir / "events.jsonl"
     agent_err = run_dir / "agent.err"
+
+    session_dir = run_dir / "claude-session"
+    session_dir.mkdir(exist_ok=True)
+
+    claude_args: list[str] = ["claude"]
+    if is_iteration:
+        claude_args += ["--continue", "-p", prompt]
+    else:
+        claude_args += ["-p", prompt]
+    claude_args += [
+        "--model", model,
+        "--effort", effort,
+        "--permission-mode", "dontAsk",
+        "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep",
+        "--max-turns", str(max_turns),
+        "--output-format", "stream-json",
+        "--verbose",
+    ]
 
     with events_path.open("a") as events_f, agent_err.open("a") as err_f:
         proc = await asyncio.create_subprocess_exec(
             "podman", "run", "--rm",
             "--user", "0:0",
             "-v", f"{repodir}:/work:z",
+            "-v", f"{session_dir}:/home/user/.claude:z",
             "-w", "/work",
             "-e", f"CLAUDE_CODE_OAUTH_TOKEN={config.claude_token}",
             "-e", "HOME=/home/user",
             config.agent_image,
-            "claude", "-p", prompt,
-            "--model", model,
-            "--effort", effort,
-            "--permission-mode", "dontAsk",
-            "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep",
-            "--max-turns", str(max_turns),
-            "--output-format", "stream-json",
-            "--verbose",
+            *claude_args,
             stdout=events_f,
             stderr=err_f,
         )
