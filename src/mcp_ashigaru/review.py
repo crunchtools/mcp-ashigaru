@@ -1,14 +1,15 @@
-"""Code review — Gatehouse runner with Gemini Pro MCP fallback."""
+"""Code review — containerized gate runners (Gatehouse, Gourmand, etc.)."""
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .config import Config
-from .models import Activity, ActivityKind
+from .models import Activity, ActivityKind, GateConfig
+from .podman_utils import hpodman
+from .repo_config import get_repo_config
 from .state import RunState
 
 
@@ -16,67 +17,66 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-async def run_review(run_id: str, config: Config) -> dict[str, Any]:
-    """Execute code review on the run's working copy.
+async def run_gate(
+    gate: GateConfig, repodir: Path, log_path: Path, config: Config,
+) -> tuple[int, str]:
+    """Run a quality gate as a sidecar container with a read-only bind mount."""
+    return await hpodman(
+        config,
+        "run", "--rm",
+        "-v", f"{repodir}:/work:ro,z",
+        gate.image, "/work",
+        log_path=log_path,
+        capture=True,
+    )
 
-    Tries Gatehouse first (5 concurrent Gemini Flash agents). If that fails
-    (rate limit), returns a message suggesting the caller use the Gemini Pro
-    MCP tool directly.
-    """
+
+async def run_gates(run_id: str, config: Config) -> dict[str, Any]:
+    """Run all configured quality gates for a repo. Returns pass/fail + per-gate output."""
     state = RunState.load(run_id, config)
     if state is None:
-        return {"error": f"unknown run_id: {run_id}"}
+        return {"error": f"unknown run_id: {run_id}", "passed": False}
 
     meta = state.read_meta()
+    repo_cfg = get_repo_config(meta.repo, config)
+
+    if not repo_cfg.gates:
+        return {"run_id": run_id, "passed": True, "skipped": True, "detail": "no gates configured"}
+
     repodir = config.work_dir / run_id / meta.repo
-    log_path = state.run_dir / "review.log"
+    results: list[dict[str, Any]] = []
+    all_passed = True
 
-    state.activity.append(Activity(
-        timestamp=_now(), kind=ActivityKind.REVIEW_OP,
-        summary="Starting code review (Gatehouse)",
-    ))
+    for gate in repo_cfg.gates:
+        log_path = state.run_dir / f"gate-{gate.name}.log"
 
-    rc, output = await _run_gatehouse(repodir, log_path)
-    if rc == 0:
         state.activity.append(Activity(
-            timestamp=_now(), kind=ActivityKind.REVIEW_OP,
-            summary="Code review complete (Gatehouse)",
-            detail=output[-1000:],
+            timestamp=_now(), kind=ActivityKind.GATE_CHECK,
+            summary=f"Running gate: {gate.name}",
         ))
-        return {
-            "run_id": run_id,
-            "tool": "gatehouse",
-            "passed": True,
+
+        rc, output = await run_gate(gate, repodir, log_path, config)
+        passed = rc == 0
+
+        state.activity.append(Activity(
+            timestamp=_now(), kind=ActivityKind.GATE_CHECK,
+            summary=f"Gate {gate.name}: {'passed' if passed else 'FAILED'}",
+            detail=output[-500:],
+        ))
+
+        results.append({
+            "name": gate.name,
+            "passed": passed,
             "output": output[-2000:],
-        }
+        })
 
-    state.activity.append(Activity(
-        timestamp=_now(), kind=ActivityKind.REVIEW_OP,
-        summary="Gatehouse failed (rate limit?), manual review recommended",
-        detail=output[-500:],
-    ))
-    return {
-        "run_id": run_id,
-        "tool": "gatehouse",
-        "passed": False,
-        "output": output[-2000:],
-        "fallback_hint": (
-            "Gatehouse failed (likely Gemini free-tier rate limit). "
-            "Use the Gemini Pro MCP tool (gemini_analyze_code) "
-            "with the PR diff for a single-shot review."
-        ),
-    }
+        if not passed:
+            all_passed = False
+            break
+
+    return {"run_id": run_id, "passed": all_passed, "gates": results}
 
 
-async def _run_gatehouse(repodir: Path, log_path: Path) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_exec(
-        "gatehouse", "--full", str(repodir),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=str(repodir),
-    )
-    out, _ = await proc.communicate()
-    output = out.decode() if out else ""
-    with log_path.open("a") as f:
-        f.write(output)
-    return proc.returncode or 0, output
+async def run_review(run_id: str, config: Config) -> dict[str, Any]:
+    """Execute code review via configured gates. Falls back to Gemini Pro hint."""
+    return await run_gates(run_id, config)

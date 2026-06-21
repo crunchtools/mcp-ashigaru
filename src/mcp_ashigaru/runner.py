@@ -15,6 +15,7 @@ from .agent import (
     build_iteration_prompt,
     resolve_tier,
     run_sealed_agent,
+    tier_effort,
     tier_max_turns,
     tier_model,
 )
@@ -102,8 +103,10 @@ async def _run_new_inner(
     classifier = asyncio.create_task(
         _classify_events_live(state, state.run_dir / "events.jsonl")
     )
+    effort = tier_effort(start_tier)
     exit_code = await run_sealed_agent(
         repodir, state.run_dir, prompt, actual_model, max_turns, config,
+        effort=effort,
     )
     classifier.cancel()
 
@@ -230,7 +233,9 @@ async def _run_iterate_inner(
     classifier = asyncio.create_task(
         _classify_events_live(state, state.run_dir / "events.jsonl")
     )
-    await run_sealed_agent(repodir, state.run_dir, prompt, model, max_turns, config)
+    effort = tier_effort(next_tier)
+    await run_sealed_agent(repodir, state.run_dir, prompt, model, max_turns, config,
+                           effort=effort)
     classifier.cancel()
 
     gate_result, gate_output = await check_gate(repodir)

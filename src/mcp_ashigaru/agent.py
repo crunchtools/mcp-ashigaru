@@ -7,10 +7,10 @@ from pathlib import Path
 
 from .config import Config
 
-TIER_TABLE: dict[int, tuple[str, int]] = {
-    1: ("claude-sonnet-4-6", 40),
-    2: ("claude-opus-4-6", 60),
-    3: ("claude-opus-4-6", 80),
+TIER_TABLE: dict[int, tuple[str, int, str]] = {
+    1: ("claude-opus-4-8", 40, "medium"),
+    2: ("claude-opus-4-8", 60, "high"),
+    3: ("claude-opus-4-8", 80, "xhigh"),
 }
 MAX_TIER = 3
 
@@ -21,6 +21,10 @@ def tier_model(tier: int) -> str:
 
 def tier_max_turns(tier: int) -> int:
     return TIER_TABLE.get(tier, TIER_TABLE[3])[1]
+
+
+def tier_effort(tier: int) -> str:
+    return TIER_TABLE.get(tier, TIER_TABLE[3])[2]
 
 
 def resolve_tier(model_hint: str) -> int:
@@ -79,6 +83,7 @@ async def run_sealed_agent(
     model: str,
     max_turns: int,
     config: Config,
+    effort: str = "high",
 ) -> int:
     events_path = run_dir / "events.jsonl"
     agent_err = run_dir / "agent.err"
@@ -93,6 +98,7 @@ async def run_sealed_agent(
             config.agent_image,
             "claude", "-p", prompt,
             "--model", model,
+            "--effort", effort,
             "--permission-mode", "dontAsk",
             "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep",
             "--max-turns", str(max_turns),

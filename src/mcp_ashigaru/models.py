@@ -118,8 +118,14 @@ class SlotLock(BaseModel):
     allocated_at: str
 
 
+class GateConfig(BaseModel):
+    name: str
+    image: str
+
+
 class RepoConfig(BaseModel):
     profile: str = "code"
     preview_domain: str = "crunchtools.com"
     prod_container: str = ""
     base_image: str = ""
+    gates: list[GateConfig] = []

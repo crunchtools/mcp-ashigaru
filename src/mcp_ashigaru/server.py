@@ -332,8 +332,8 @@ async def run_review(run_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def promote(run_id: str) -> dict[str, Any]:
-    """Squash-merge the PR, teardown preview, ship. Trust-based promotion."""
+async def promote(run_id: str, skip_gates: bool = False) -> dict[str, Any]:
+    """Run quality gates, then squash-merge the PR, teardown preview, ship."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
@@ -341,6 +341,15 @@ async def promote(run_id: str) -> dict[str, Any]:
     meta = state.read_meta()
     if not meta.pr_url:
         return {"error": "no PR URL — create a PR first", "run_id": run_id}
+
+    if not skip_gates:
+        gate_results = await review_mod.run_gates(run_id, CFG)
+        if not gate_results.get("passed"):
+            state.activity.append(Activity(
+                timestamp=_now(), kind=ActivityKind.GATE_CHECK,
+                summary="Pre-promote gates failed — not merging",
+            ))
+            return {"run_id": run_id, "promoted": False, "gates": gate_results}
 
     pr_num = meta.pr_url.rstrip("/").rsplit("/", 1)[-1]
     ok, detail = await merge_pr(meta.repo, int(pr_num), CFG)
