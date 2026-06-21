@@ -1,0 +1,55 @@
+# Ashigaru Agent — sealed Claude Code worker container
+#
+# The dispatcher (mcp-ashigaru) launches these as ephemeral podman containers
+# via devrunner's rootless podman socket. Each run gets a cloned repo mounted
+# at /work, an OAuth token in the environment, and a prompt on the command line.
+#
+# Build (via GHA → quay; never hand-pushed):
+#   podman build -f Containerfile.agent \
+#     --build-arg CLAUDE_VERSION=2.1.170 \
+#     -t quay.io/crunchtools/mcp-ashigaru-agent-claude .
+#
+# The dispatcher invokes it as:
+#   podman run --rm -v /path/to/repo:/work:z -w /work \
+#     -e CLAUDE_CODE_OAUTH_TOKEN=... -e HOME=/home/user \
+#     quay.io/crunchtools/mcp-ashigaru-agent-claude \
+#     -p "fix the bug..." --model claude-opus-4-8 --effort medium \
+#     --permission-mode dontAsk --allowedTools Read,Edit,Write,Bash,Glob,Grep \
+#     --max-turns 40 --output-format stream-json --verbose
+
+FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
+
+ARG CLAUDE_VERSION=latest
+
+LABEL name="mcp-ashigaru-agent-claude" \
+      summary="Sealed Claude Code worker for Ashigaru dispatch" \
+      description="Ephemeral agent container: Claude Code CLI + dev toolchain (Node.js, Python, git)" \
+      maintainer="crunchtools.com" \
+      url="https://github.com/crunchtools/mcp-ashigaru" \
+      io.k8s.display-name="Ashigaru Agent (Claude Code)" \
+      io.containers.autoupdate="registry" \
+      org.opencontainers.image.source="https://github.com/crunchtools/mcp-ashigaru" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later"
+
+# Dev toolchain: Node.js/npm (JS projects), Python/pip (Python projects),
+# git (agent may inspect history), build essentials (native npm modules).
+RUN microdnf install -y \
+        nodejs npm \
+        python3 python3-pip \
+        git ca-certificates \
+        gcc-c++ make \
+    && microdnf clean all
+
+# uv — fleet Python projects use `uv run ruff/mypy/pytest`
+RUN python3 -m pip install --no-cache-dir uv
+
+# Claude Code CLI — version pinned via build arg for reproducibility
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_VERSION} \
+    && claude --version
+
+# Non-root user matching the dispatcher's -e HOME=/home/user
+RUN mkdir -p /home/user && chown 1000:1000 /home/user
+USER 1000
+WORKDIR /work
+
+ENTRYPOINT ["claude"]

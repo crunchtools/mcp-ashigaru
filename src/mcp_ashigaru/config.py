@@ -14,7 +14,7 @@ class Config:
     ))
     org: str = field(default_factory=lambda: os.environ.get("ASHIGARU_ORG", "crunchtools"))
     agent_image: str = field(default_factory=lambda: os.environ.get(
-        "ASHIGARU_AGENT_IMAGE", "localhost/rotv-dev-runner:latest"
+        "ASHIGARU_AGENT_IMAGE", "quay.io/crunchtools/mcp-ashigaru-agent-claude:latest"
     ))
     container_host: str = field(default_factory=lambda: os.environ.get(
         "CONTAINER_HOST", "unix:///run/podman/podman.sock"

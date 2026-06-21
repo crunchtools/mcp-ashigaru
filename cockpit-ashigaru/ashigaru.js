@@ -24,7 +24,7 @@
     function apiDelete(path) {
         return new Promise(function (resolve, reject) {
             var http = new cockpit.http({ port: 8020, address: "localhost" });
-            http.request({ method: "DELETE", path: path })
+            http.request({ method: "DELETE", path: path, body: "" })
                 .then(function (data) { resolve(data); })
                 .catch(function (err) { reject(err); });
         });
