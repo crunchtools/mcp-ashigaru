@@ -33,6 +33,7 @@ async def run_gate(
         gate.image, *gate.args,
         log_path=log_path,
         capture=True,
+        use_host_socket=False,
     )
 
 

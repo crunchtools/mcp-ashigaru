@@ -11,9 +11,10 @@ from .config import Config
 
 async def hpodman(
     config: Config, *args: str, log_path: Path | None = None,
-    capture: bool = False,
+    capture: bool = False, use_host_socket: bool = True,
 ) -> tuple[int, str]:
-    merged_env = {**os.environ, "CONTAINER_HOST": config.host_podman}
+    socket = config.host_podman if use_host_socket else config.container_host
+    merged_env = {**os.environ, "CONTAINER_HOST": socket}
     if capture:
         proc = await asyncio.create_subprocess_exec(
             "podman", *args,
