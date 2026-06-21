@@ -106,7 +106,9 @@ async def run_sealed_agent(
     projects_dir.mkdir(parents=True, exist_ok=True)
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    claude_args: list[str] = ["claude"]
+    # ENTRYPOINT is ["claude"] — do NOT prepend "claude" here or the
+    # arg parser sees a positional that swallows the -p prompt.
+    claude_args: list[str] = []
     if resume_session and session_id:
         claude_args += ["--resume", session_id, "-p", prompt]
     elif session_id:
