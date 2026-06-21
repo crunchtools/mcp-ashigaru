@@ -74,10 +74,10 @@ async def _seed_db(
     slot_dir.mkdir(parents=True, exist_ok=True)
     (slot_dir / "data").mkdir(exist_ok=True)
     seed_path = slot_dir / "data" / "seed.sql"
-    rc, dump = await _hpodman(config, "exec", prod, "pg_dump", "-U", "rotv", "rotv",
-                              capture=True)
-    if rc == 0:
-        seed_path.write_text(dump)
+    rc, _ = await _hpodman(config, "exec", prod, "pg_dump", "-U", "rotv", "rotv",
+                           log_path=seed_path)
+    if rc != 0:
+        seed_path.unlink(missing_ok=True)
 
 
 async def _launch_container(
