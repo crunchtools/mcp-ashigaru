@@ -21,9 +21,13 @@ async def run_gate(
     gate: GateConfig, repodir: Path, log_path: Path, config: Config,
 ) -> tuple[int, str]:
     """Run a quality gate as a sidecar container with a read-only bind mount."""
+    env_args: list[str] = []
+    if gate.env_file and Path(gate.env_file).exists():
+        env_args = ["--env-file", gate.env_file]
     return await hpodman(
         config,
         "run", "--rm",
+        *env_args,
         "-v", f"{repodir}:/work:ro,z",
         "-w", "/work",
         gate.image,

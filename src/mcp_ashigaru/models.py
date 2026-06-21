@@ -122,6 +122,7 @@ class SlotLock(BaseModel):
 class GateConfig(BaseModel):
     name: str
     image: str
+    env_file: str = ""
 
 
 class RepoConfig(BaseModel):
