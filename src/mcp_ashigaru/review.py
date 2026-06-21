@@ -25,7 +25,8 @@ async def run_gate(
         config,
         "run", "--rm",
         "-v", f"{repodir}:/work:ro,z",
-        gate.image, "/work",
+        "-w", "/work",
+        gate.image,
         log_path=log_path,
         capture=True,
     )
