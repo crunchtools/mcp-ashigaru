@@ -199,3 +199,84 @@ async def test_fanout_tolerates_webhook_failure(mock_matrix_notifier, both_cfg: 
     with patch("mcp_ashigaru.notify._send_webhook", side_effect=OSError("connection refused")):
         await _deliver("test", both_cfg)
         mock_matrix_notifier.send.assert_called_once()
+
+
+# --- Matrix threading / race-condition tests ---
+
+
+def _run_state_for_thread(matrix_cfg: Config):
+    from mcp_ashigaru.state import RunState
+
+    meta = _make_meta(Phase.QUEUED)
+    return RunState.create(meta, matrix_cfg)
+
+
+@pytest.mark.asyncio
+async def test_thread_root_persists_event_id(matrix_cfg: Config) -> None:
+    from mcp_ashigaru.notify import _deliver
+
+    state = _run_state_for_thread(matrix_cfg)
+    mock = AsyncMock()
+    mock.send = AsyncMock(return_value="$root-event-id")
+    with patch("mcp_ashigaru.notify._matrix_notifier", mock):
+        await _deliver("first", matrix_cfg, "m.text", state=state, create_root=True)
+
+    # First (root) message is unthreaded and its event ID is saved as the thread.
+    assert mock.send.call_args.kwargs.get("thread_id") is None
+    assert state.read_meta().matrix_thread_id == "$root-event-id"
+
+
+@pytest.mark.asyncio
+async def test_subsequent_message_waits_for_pending_then_threads(matrix_cfg: Config) -> None:
+    from mcp_ashigaru.notify import _PENDING_THREAD, _deliver
+
+    state = _run_state_for_thread(matrix_cfg)
+    state.update_meta(matrix_thread_id=_PENDING_THREAD)
+
+    mock = AsyncMock()
+    mock.send = AsyncMock(return_value="$child-event-id")
+
+    async def resolve_pending() -> None:
+        await asyncio.sleep(0.1)
+        state.update_meta(matrix_thread_id="$root-event-id")
+
+    with patch("mcp_ashigaru.notify._matrix_notifier", mock):
+        resolver = asyncio.create_task(resolve_pending())
+        await _deliver("second", matrix_cfg, "m.text", state=state, create_root=False)
+        await resolver
+
+    # The waiting message threads under the resolved root, not the sentinel.
+    assert mock.send.call_args.kwargs.get("thread_id") == "$root-event-id"
+
+
+@pytest.mark.asyncio
+async def test_failed_root_clears_pending_sentinel(matrix_cfg: Config) -> None:
+    from mcp_ashigaru.notify import _deliver
+
+    state = _run_state_for_thread(matrix_cfg)
+    mock = AsyncMock()
+    mock.send = AsyncMock(return_value=None)  # room_send failed / no event id
+    with patch("mcp_ashigaru.notify._matrix_notifier", mock):
+        await _deliver("first", matrix_cfg, "m.text", state=state, create_root=True)
+
+    # Pending sentinel cleared so a later phase change can retry thread creation.
+    assert state.read_meta().matrix_thread_id is None
+
+
+@pytest.mark.asyncio
+async def test_fire_phase_change_sets_pending_synchronously(matrix_cfg: Config) -> None:
+    from mcp_ashigaru.notify import _PENDING_THREAD, fire_phase_change
+
+    state = _run_state_for_thread(matrix_cfg)
+    mock = AsyncMock()
+    mock.send = AsyncMock(return_value="$root-event-id")
+    with (
+        patch("mcp_ashigaru.notify._matrix_notifier", mock),
+        patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop,
+    ):
+        mock_loop.return_value.create_task = lambda coro: coro.close()
+        meta = state.read_meta()
+        fire_phase_change(meta, Phase.VALIDATING, Phase.AWAITING_REVIEW, matrix_cfg, state=state)
+
+    # Sentinel is written before the async task runs, blocking duplicate threads.
+    assert state.read_meta().matrix_thread_id == _PENDING_THREAD

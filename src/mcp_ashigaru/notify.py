@@ -13,6 +13,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .config import Config
     from .models import Phase, RunMeta
+    from .state import RunState
+
+# Sentinel written to RunMeta.matrix_thread_id while the thread-root message is
+# being sent, so concurrent phase changes wait for the real ID instead of racing
+# to create a second thread.
+_PENDING_THREAD = "pending"
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +90,16 @@ class MatrixNotifier:
             await self._client.close()
         self._ready = False
 
-    async def send(self, message: str, msgtype: str = "m.notice") -> None:
+    async def send(
+        self, message: str, msgtype: str = "m.notice", thread_id: str | None = None,
+    ) -> str | None:
+        """Send a message, optionally threaded under ``thread_id``.
+
+        Returns the event ID of the sent message, or ``None`` on failure.
+        """
         if not self._ready or not self._client:
             logger.warning("Matrix notifier not ready, dropping message")
-            return
+            return None
 
         body = message
         formatted_body = message.replace("\n", "<br>")
@@ -100,15 +112,23 @@ class MatrixNotifier:
                 + formatted_body
             )
 
-        content = {
+        content: dict[str, Any] = {
             "msgtype": msgtype,
             "body": body,
             "format": "org.matrix.custom.html",
             "formatted_body": formatted_body,
         }
 
+        if thread_id:
+            content["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": thread_id},
+            }
+
         try:
-            await self._client.room_send(
+            resp = await self._client.room_send(
                 room_id=self._room_id,
                 message_type="m.room.message",
                 content=content,
@@ -116,6 +136,13 @@ class MatrixNotifier:
             )
         except Exception:
             logger.exception("Matrix send failed")
+            return None
+
+        event_id = getattr(resp, "event_id", None)
+        if not event_id:
+            logger.error("Matrix room_send returned no event ID: %r", resp)
+            return None
+        return event_id
 
 
 async def init_matrix(config: Config) -> None:
@@ -191,10 +218,44 @@ async def _send_cmd(cmd: str, message: str) -> None:
         )
 
 
-async def _deliver(message: str, config: Config, msgtype: str = "m.notice") -> None:
+async def _wait_for_thread_id(
+    state: RunState, timeout: float = 10.0, interval: float = 0.25,
+) -> str | None:
+    """Wait for the thread-root task to publish the real ``matrix_thread_id``.
+
+    Returns the resolved thread ID, or ``None`` if it stays pending past
+    ``timeout`` (e.g. the root message failed to send).
+    """
+    waited = 0.0
+    while waited < timeout:
+        thread_id = state.read_meta().matrix_thread_id
+        if thread_id and thread_id != _PENDING_THREAD:
+            return thread_id
+        await asyncio.sleep(interval)
+        waited += interval
+    logger.warning("Timed out waiting for matrix_thread_id; sending unthreaded")
+    return None
+
+
+async def _deliver(
+    message: str,
+    config: Config,
+    msgtype: str = "m.notice",
+    state: RunState | None = None,
+    create_root: bool = False,
+) -> None:
     if _matrix_notifier:
         try:
-            await _matrix_notifier.send(message, msgtype)
+            if state is not None and create_root:
+                # This call creates the thread; persist the resulting event ID
+                # (or clear the pending sentinel if it failed) for later calls.
+                event_id = await _matrix_notifier.send(message, msgtype)
+                state.update_meta(matrix_thread_id=event_id or None)
+            elif state is not None:
+                thread_id = await _wait_for_thread_id(state)
+                await _matrix_notifier.send(message, msgtype, thread_id=thread_id)
+            else:
+                await _matrix_notifier.send(message, msgtype)
         except Exception:
             logger.exception("Matrix notification failed")
 
@@ -214,7 +275,11 @@ async def _deliver(message: str, config: Config, msgtype: str = "m.notice") -> N
 
 
 def fire_phase_change(
-    meta: RunMeta, old_phase: Phase, new_phase: Phase, config: Config,
+    meta: RunMeta,
+    old_phase: Phase,
+    new_phase: Phase,
+    config: Config,
+    state: RunState | None = None,
 ) -> None:
     from .models import TERMINAL_PHASES
 
@@ -236,9 +301,26 @@ def fire_phase_change(
     if new_phase not in TERMINAL_PHASES:
         return
 
+    # Decide synchronously whether this call owns thread creation. Writing the
+    # "pending" sentinel before dispatching the async send closes the race where
+    # a second phase change reads matrix_thread_id=None and creates a duplicate
+    # thread before the first task persists the real ID.
+    create_root = False
+    if (
+        state is not None
+        and _matrix_notifier is not None
+        and config.matrix_homeserver
+        and config.matrix_room_id
+        and meta.matrix_thread_id is None
+    ):
+        create_root = True
+        state.update_meta(matrix_thread_id=_PENDING_THREAD)
+
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_deliver(message, config, "m.text"))
+        loop.create_task(
+            _deliver(message, config, "m.text", state=state, create_root=create_root),
+        )
     except RuntimeError:
         pass
 
