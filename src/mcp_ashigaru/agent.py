@@ -91,6 +91,7 @@ async def run_sealed_agent(
     with events_path.open("a") as events_f, agent_err.open("a") as err_f:
         proc = await asyncio.create_subprocess_exec(
             "podman", "run", "--rm",
+            "--user", "0:0",
             "-v", f"{repodir}:/work:z",
             "-w", "/work",
             "-e", f"CLAUDE_CODE_OAUTH_TOKEN={config.claude_token}",
