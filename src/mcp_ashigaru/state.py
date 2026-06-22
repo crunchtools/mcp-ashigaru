@@ -84,7 +84,7 @@ class RunState:
             phase_before=old_phase,
             phase_after=phase,
         ))
-        if phase in (Phase.FAILED, Phase.ESCALATED, Phase.CANCELLED) and meta.branch:
+        if phase in (Phase.ESCALATED, Phase.CANCELLED) and meta.branch:
             self._cleanup_remote_branch(meta)
 
         if (
