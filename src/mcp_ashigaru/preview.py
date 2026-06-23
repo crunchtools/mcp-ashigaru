@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ from .podman_utils import hpodman as _hpodman
 from .repo_config import RepoConfig, get_repo_config
 from .slots import SlotManager
 from .state import RunState
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
@@ -219,8 +222,11 @@ async def teardown(run_id: str, config: Config) -> dict[str, Any]:
         return {"run_id": run_id, "freed": False, "detail": "no slot allocated"}
 
     log_path = state.run_dir / "preview.log"
-    await _hpodman(config, "rmi", f"localhost/ashigaru-preview-{run_id}:latest")
-    await _prune_images(config, meta.repo, meta.issue, run_id, log_path)
+    try:
+        await _hpodman(config, "rmi", f"localhost/ashigaru-preview-{run_id}:latest")
+        await _prune_images(config, meta.repo, meta.issue, run_id, log_path)
+    except Exception:
+        logger.exception("Image cleanup failed for %s", run_id)
     freed = await slot_mgr.release(run_id)
     state.update_meta(preview_slot=None, preview_url=None)
     state.activity.append(Activity(

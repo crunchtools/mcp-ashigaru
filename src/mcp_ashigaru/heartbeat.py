@@ -27,7 +27,10 @@ async def heartbeat_loop(config: Config) -> None:
 
 
 async def _tick(config: Config) -> None:
-    await hpodman(config, "image", "prune", "-f")
+    try:
+        await hpodman(config, "image", "prune", "-f")
+    except Exception:
+        logger.exception("Image prune failed")
     runs = RunState.list_all(config)
     now = datetime.now(UTC)
     for run_summary in runs:
