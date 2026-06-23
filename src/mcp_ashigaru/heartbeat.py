@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from .config import Config
 from .models import ACTIVE_PHASES, Phase
 from .notify import send_heartbeat
+from .podman_utils import hpodman
 from .state import RunState
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,10 @@ async def heartbeat_loop(config: Config) -> None:
 
 
 async def _tick(config: Config) -> None:
+    try:
+        await hpodman(config, "image", "prune", "-f")
+    except Exception:
+        logger.exception("Image prune failed")
     runs = RunState.list_all(config)
     now = datetime.now(UTC)
     for run_summary in runs:
