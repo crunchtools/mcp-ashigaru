@@ -212,12 +212,15 @@ async def teardown(run_id: str, config: Config) -> dict[str, Any]:
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
 
+    meta = state.read_meta()
     slot_mgr = SlotManager(config)
     lock = slot_mgr.find_by_run(run_id)
     if lock is None:
         return {"run_id": run_id, "freed": False, "detail": "no slot allocated"}
 
+    log_path = state.run_dir / "preview.log"
     await _hpodman(config, "rmi", f"localhost/ashigaru-preview-{run_id}:latest")
+    await _prune_images(config, meta.repo, meta.issue, run_id, log_path)
     freed = await slot_mgr.release(run_id)
     state.update_meta(preview_slot=None, preview_url=None)
     state.activity.append(Activity(
