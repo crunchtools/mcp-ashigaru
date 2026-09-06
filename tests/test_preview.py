@@ -52,7 +52,8 @@ def run_with_slot(cfg: Config) -> RunState:
 
 
 @pytest.mark.asyncio
-async def test_teardown_calls_prune_images(cfg: Config, run_with_slot: RunState) -> None:  # noqa: ARG001
+@pytest.mark.usefixtures("run_with_slot")
+async def test_teardown_calls_prune_images(cfg: Config) -> None:
     from mcp_ashigaru.preview import teardown
 
     calls: list[tuple[str, ...]] = []

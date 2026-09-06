@@ -59,6 +59,37 @@ async def run_new(
         ))
 
 
+async def _await_branch(state: RunState, timeout_seconds: int = 10) -> None:
+    """Wait for create_run's _clone_and_prepare to record the branch name."""
+    for _ in range(timeout_seconds):
+        if state.read_meta().branch:
+            return
+        await asyncio.sleep(1)
+
+
+async def _prepare_workspace(
+    state: RunState, repo: str, issue: int, repodir: Path, log_path: Path, config: Config
+) -> bool:
+    """Clone the repo and create the working branch. False means the clone failed.
+
+    Both are skipped when create_run already did them via _clone_and_prepare.
+    """
+    if repodir.is_dir():
+        await _await_branch(state)
+        return True
+
+    state.set_phase(Phase.CLONING, f"Cloning {config.org}/{repo}")
+    if not await clone(repo, repodir, config, log_path):
+        state.set_phase(Phase.FAILED, "Git clone failed")
+        return False
+
+    if not state.read_meta().branch:
+        branch = f"fix/issue-{issue}"
+        await create_branch(repodir, branch)
+        state.update_meta(branch=branch)
+    return True
+
+
 async def _run_new_inner(
     state: RunState,
     run_id: str,
@@ -68,26 +99,12 @@ async def _run_new_inner(
     model_hint: str,
     config: Config,
 ) -> None:
+    """Prepare the workspace, run the sealed agent, then check the gate."""
     repodir = config.work_dir / run_id / repo
     log_path = state.run_dir / "setup.log"
 
-    # Clone if not already done by _clone_and_prepare in create_run
-    if not repodir.is_dir():
-        state.set_phase(Phase.CLONING, f"Cloning {config.org}/{repo}")
-        if not await clone(repo, repodir, config, log_path):
-            state.set_phase(Phase.FAILED, "Git clone failed")
-            return
-        meta = state.read_meta()
-        if not meta.branch:
-            branch = f"fix/issue-{issue}"
-            await create_branch(repodir, branch)
-            state.update_meta(branch=branch)
-    else:
-        for _ in range(10):
-            meta_check = state.read_meta()
-            if meta_check.branch:
-                break
-            await asyncio.sleep(1)
+    if not await _prepare_workspace(state, repo, issue, repodir, log_path, config):
+        return
 
     meta = state.read_meta()
     branch = meta.branch
@@ -302,14 +319,13 @@ def _process_event(
             continue
         tool_name = block.get("name", "")
         tool_input = block.get("input", {})
-        kind = ActivityLog.classify_tool_call(tool_name, tool_input)
+        kind = ActivityLog.classify_tool_call(tool_name)
         summary, files = ActivityLog.summarize_tool_call(tool_name, tool_input)
 
         state.activity.append(Activity(
             timestamp=_now(), kind=kind, summary=summary, files=files,
         ))
 
-        # Infer sub-phase transitions
         meta = state.read_meta()
         if meta.phase in (Phase.ANALYZING, Phase.IMPLEMENTING, Phase.VALIDATING):
             new_phase = _infer_sub_phase(kind, meta.phase)

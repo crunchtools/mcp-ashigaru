@@ -1,4 +1,10 @@
-"""Notifications — phase changes and heartbeat via webhook, command, or Matrix E2EE."""
+"""Notifications — phase changes and heartbeat via webhook, command, or Matrix E2EE.
+
+Matrix messages for one run share a thread. _PENDING_THREAD is written to
+RunMeta.matrix_thread_id while the thread-root message is in flight, so a
+concurrent phase change waits for the real event ID instead of racing to
+create a second thread.
+"""
 
 from __future__ import annotations
 
@@ -15,10 +21,8 @@ if TYPE_CHECKING:
     from .models import Phase, RunMeta
     from .state import RunState
 
-# Sentinel written to RunMeta.matrix_thread_id while the thread-root message is
-# being sent, so concurrent phase changes wait for the real ID instead of racing
-# to create a second thread.
 _PENDING_THREAD = "pending"
+WEBHOOK_TIMEOUT_SECONDS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +201,7 @@ def _send_webhook(url: str, secret: str, message: str) -> None:
         },
         method="POST",
     )
-    with urlopen(req, timeout=30) as resp:  # noqa: S310
+    with urlopen(req, timeout=WEBHOOK_TIMEOUT_SECONDS) as resp:  # noqa: S310
         resp.read()
 
 
@@ -247,8 +251,6 @@ async def _deliver(
     if _matrix_notifier:
         try:
             if state is not None and create_root:
-                # This call creates the thread; persist the resulting event ID
-                # (or clear the pending sentinel if it failed) for later calls.
                 event_id = await _matrix_notifier.send(message, msgtype)
                 state.update_meta(matrix_thread_id=event_id or None)
             elif state is not None:
@@ -281,6 +283,13 @@ def fire_phase_change(
     config: Config,
     state: RunState | None = None,
 ) -> None:
+    """Announce a phase change, threading the message under the run's root.
+
+    Thread ownership is decided synchronously: writing the "pending" sentinel
+    before dispatching the async send closes the race where a second phase
+    change reads matrix_thread_id=None and creates a duplicate thread before
+    the first task persists the real ID.
+    """
     from .models import TERMINAL_PHASES
 
     repo_issue = f"{meta.repo} #{meta.issue}"
@@ -301,10 +310,6 @@ def fire_phase_change(
     if new_phase not in TERMINAL_PHASES:
         return
 
-    # Decide synchronously whether this call owns thread creation. Writing the
-    # "pending" sentinel before dispatching the async send closes the race where
-    # a second phase change reads matrix_thread_id=None and creates a duplicate
-    # thread before the first task persists the real ID.
     create_root = False
     if (
         state is not None
@@ -322,7 +327,13 @@ def fire_phase_change(
             _deliver(message, config, "m.text", state=state, create_root=create_root),
         )
     except RuntimeError:
-        pass
+        logger.warning(
+            "No running event loop; dropped the %s notification for run %s",
+            new_phase.value,
+            meta.run_id,
+        )
+        if create_root and state is not None:
+            state.update_meta(matrix_thread_id=None)
 
 
 async def send_heartbeat(

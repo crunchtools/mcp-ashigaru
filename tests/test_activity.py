@@ -56,27 +56,27 @@ def test_latest(log: ActivityLog) -> None:
 
 
 def test_classify_read() -> None:
-    kind = ActivityLog.classify_tool_call("Read", {"file_path": "test.py"})
+    kind = ActivityLog.classify_tool_call("Read")
     assert kind == ActivityKind.AGENT_READ
 
 
 def test_classify_edit() -> None:
-    kind = ActivityLog.classify_tool_call("Edit", {"file_path": "test.py"})
+    kind = ActivityLog.classify_tool_call("Edit")
     assert kind == ActivityKind.AGENT_EDIT
 
 
 def test_classify_write() -> None:
-    kind = ActivityLog.classify_tool_call("Write", {"file_path": "test.py"})
+    kind = ActivityLog.classify_tool_call("Write")
     assert kind == ActivityKind.AGENT_EDIT
 
 
 def test_classify_bash() -> None:
-    kind = ActivityLog.classify_tool_call("Bash", {"command": "npm test"})
+    kind = ActivityLog.classify_tool_call("Bash")
     assert kind == ActivityKind.AGENT_BASH
 
 
 def test_classify_grep() -> None:
-    kind = ActivityLog.classify_tool_call("Grep", {"pattern": "foo"})
+    kind = ActivityLog.classify_tool_call("Grep")
     assert kind == ActivityKind.AGENT_SEARCH
 
 

@@ -121,11 +121,11 @@ class SlotManager:
             await proc.wait()
 
     def list_all(self) -> list[dict]:
-        result = []
+        slot_states = []
         for n in range(1, self._max + 1):
             lock = self._read_lock(n)
             if lock:
-                result.append(lock.model_dump())
+                slot_states.append(lock.model_dump())
             else:
-                result.append({"slot": n, "status": "free"})
-        return result
+                slot_states.append({"slot": n, "status": "free"})
+        return slot_states

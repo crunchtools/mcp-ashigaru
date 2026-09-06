@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ from .activity import ActivityLog
 from .config import Config
 from .models import Activity, ActivityKind, Attempt, Phase, RunMeta
 from .notify import fire_phase_change
+
+logger = logging.getLogger(__name__)
 
 RUNID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,99}")
 LOG_FILES = ("agent.err", "setup.log", "runner.log", "preview.log")
@@ -109,7 +112,13 @@ class RunState:
             loop = asyncio.get_running_loop()
             loop.create_task(delete_remote_branch(meta.repo, meta.branch, self._config))
         except RuntimeError:
-            pass
+            orphan = f"{meta.repo}:{meta.branch}"
+            logger.warning("No running event loop; remote branch %s was not deleted", orphan)
+            self.activity.append(Activity(
+                timestamp=_now(), kind=ActivityKind.ERROR,
+                summary=f"Remote branch {orphan} was left behind",
+                detail="Deletion needs a running event loop. Delete it by hand.",
+            ))
 
     def update_meta(self, **fields: Any) -> None:
         meta = self.read_meta()

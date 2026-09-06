@@ -43,7 +43,7 @@ class ActivityLog:
         return self.query(tail=count)
 
     @staticmethod
-    def classify_tool_call(tool_name: str, _tool_input: dict[str, Any]) -> ActivityKind:
+    def classify_tool_call(tool_name: str) -> ActivityKind:
         if tool_name in ("Read",):
             return ActivityKind.AGENT_READ
         if tool_name in ("Edit", "Write"):
