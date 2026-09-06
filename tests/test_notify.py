@@ -133,12 +133,11 @@ async def test_send_heartbeat_skipped_when_no_config(tmp_path: Path) -> None:
         mock_wh.assert_not_called()
 
 
-# --- Matrix notification tests ---
 
 
 @pytest.mark.asyncio
-async def test_send_heartbeat_matrix(mock_matrix_notifier) -> None:
-    cfg = Config(state_dir=Path("/tmp/test"))  # noqa: S108
+async def test_send_heartbeat_matrix(mock_matrix_notifier, tmp_path: Path) -> None:
+    cfg = Config(state_dir=tmp_path)
     meta = _make_meta(Phase.ANALYZING)
     await send_heartbeat(meta, 12, "Read Sidebar.jsx", cfg)
     mock_matrix_notifier.send.assert_called_once()
@@ -146,8 +145,8 @@ async def test_send_heartbeat_matrix(mock_matrix_notifier) -> None:
 
 
 @pytest.mark.asyncio
-async def test_terminal_phase_uses_m_text(mock_matrix_notifier) -> None:
-    cfg = Config(state_dir=Path("/tmp/test"))  # noqa: S108
+async def test_terminal_phase_uses_m_text(mock_matrix_notifier, tmp_path: Path) -> None:
+    cfg = Config(state_dir=tmp_path)
     meta = _make_meta(Phase.AWAITING_REVIEW)
     with patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop:
         mock_loop.return_value.create_task = asyncio.ensure_future
@@ -158,8 +157,8 @@ async def test_terminal_phase_uses_m_text(mock_matrix_notifier) -> None:
 
 
 @pytest.mark.asyncio
-async def test_nonterminal_phase_skips_notification(mock_matrix_notifier) -> None:
-    cfg = Config(state_dir=Path("/tmp/test"))  # noqa: S108
+async def test_nonterminal_phase_skips_notification(mock_matrix_notifier, tmp_path: Path) -> None:
+    cfg = Config(state_dir=tmp_path)
     meta = _make_meta(Phase.ANALYZING)
     with patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop:
         mock_loop.return_value.create_task = asyncio.ensure_future
@@ -201,7 +200,6 @@ async def test_fanout_tolerates_webhook_failure(mock_matrix_notifier, both_cfg: 
         mock_matrix_notifier.send.assert_called_once()
 
 
-# --- Matrix threading / race-condition tests ---
 
 
 def _run_state_for_thread(matrix_cfg: Config):
@@ -221,9 +219,12 @@ async def test_thread_root_persists_event_id(matrix_cfg: Config) -> None:
     with patch("mcp_ashigaru.notify._matrix_notifier", mock):
         await _deliver("first", matrix_cfg, "m.text", state=state, create_root=True)
 
-    # First (root) message is unthreaded and its event ID is saved as the thread.
-    assert mock.send.call_args.kwargs.get("thread_id") is None
-    assert state.read_meta().matrix_thread_id == "$root-event-id"
+    assert mock.send.call_args.kwargs.get("thread_id") is None, (
+        "the root message must be unthreaded"
+    )
+    assert state.read_meta().matrix_thread_id == "$root-event-id", (
+        "the root event ID becomes the thread for later messages"
+    )
 
 
 @pytest.mark.asyncio
@@ -245,8 +246,9 @@ async def test_subsequent_message_waits_for_pending_then_threads(matrix_cfg: Con
         await _deliver("second", matrix_cfg, "m.text", state=state, create_root=False)
         await resolver
 
-    # The waiting message threads under the resolved root, not the sentinel.
-    assert mock.send.call_args.kwargs.get("thread_id") == "$root-event-id"
+    assert mock.send.call_args.kwargs.get("thread_id") == "$root-event-id", (
+        "a waiting message threads under the resolved root, not the sentinel"
+    )
 
 
 @pytest.mark.asyncio
@@ -259,8 +261,9 @@ async def test_failed_root_clears_pending_sentinel(matrix_cfg: Config) -> None:
     with patch("mcp_ashigaru.notify._matrix_notifier", mock):
         await _deliver("first", matrix_cfg, "m.text", state=state, create_root=True)
 
-    # Pending sentinel cleared so a later phase change can retry thread creation.
-    assert state.read_meta().matrix_thread_id is None
+    assert state.read_meta().matrix_thread_id is None, (
+        "the sentinel must be cleared so a later phase change can retry"
+    )
 
 
 @pytest.mark.asyncio
@@ -278,5 +281,6 @@ async def test_fire_phase_change_sets_pending_synchronously(matrix_cfg: Config) 
         meta = state.read_meta()
         fire_phase_change(meta, Phase.VALIDATING, Phase.AWAITING_REVIEW, matrix_cfg, state=state)
 
-    # Sentinel is written before the async task runs, blocking duplicate threads.
-    assert state.read_meta().matrix_thread_id == _PENDING_THREAD
+    assert state.read_meta().matrix_thread_id == _PENDING_THREAD, (
+        "the sentinel is written before the async task runs, blocking duplicates"
+    )

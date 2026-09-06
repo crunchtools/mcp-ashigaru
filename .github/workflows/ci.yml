@@ -35,20 +35,12 @@ jobs:
   gourmand:
     name: Code Quality (Gourmand)
     runs-on: ubuntu-latest
+    container:
+      image: quay.io/crunchtools/gourmand:latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Run Gourmand (AI slop detection)
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            docker run --rm -v "${{ github.workspace }}":/repo \
-              quay.io/crunchtools/gourmand:latest \
-              --diff-source "branch:${{ github.event.pull_request.base.sha }}..${{ github.sha }}" /repo
-          else
-            docker run --rm -v "${{ github.workspace }}":/repo \
-              quay.io/crunchtools/gourmand:latest --full /repo || true
-          fi
+      - name: Run Gourmand
+        run: gourmand --full .
 
   gatehouse:
     name: Code Review (Gatehouse)

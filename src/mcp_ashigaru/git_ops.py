@@ -1,4 +1,9 @@
-"""Git and GitHub CLI operations via subprocess."""
+"""Git and GitHub CLI operations via subprocess.
+
+Importing this module marks every path as a safe.directory: ashigaru runs as
+root, but it chowns clones to uid 1000 (devrunner) for the worker containers,
+which otherwise trips git's dubious-ownership check.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +14,6 @@ from pathlib import Path
 
 from .config import Config
 
-# The ashigaru container runs as root but clones are chowned to 1000 (devrunner)
-# for the worker containers. Suppress git's dubious-ownership check.
 subprocess.run(
     ["git", "config", "--global", "--add", "safe.directory", "*"],
     capture_output=True, check=False,

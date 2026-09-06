@@ -66,7 +66,6 @@
         return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
 
-    // ---- Run List View -------------------------------------------------------
 
     function renderListPage() {
         var phases = [
@@ -185,7 +184,6 @@
         }
     }
 
-    // ---- Run Detail View -----------------------------------------------------
 
     function renderDetailPage(runId) {
         document.body.innerHTML = '<div class="pf-v6-c-page"><main class="pf-v6-c-page__main">' +
@@ -226,7 +224,6 @@
 
         var html = '<div class="pf-v6-l-grid pf-m-gutter">';
 
-        // -- Metadata card --
         html += '<div class="pf-v6-l-grid__item pf-m-12-col pf-m-6-col-on-lg">' +
             '<div class="pf-v6-c-card"><div class="pf-v6-c-card__header"><div class="pf-v6-c-card__header-main">Metadata</div></div>' +
             '<div class="pf-v6-c-card__body"><dl class="pf-v6-c-description-list pf-m-horizontal">';
@@ -253,7 +250,6 @@
         }
         html += '</dl></div></div></div>';
 
-        // -- Attempts card --
         var attempts = detail.attempts || [];
         if (attempts.length > 0) {
             html += '<div class="pf-v6-l-grid__item pf-m-12-col pf-m-6-col-on-lg">' +
@@ -272,7 +268,6 @@
             html += '</tbody></table></div></div></div>';
         }
 
-        // -- Activity timeline card --
         html += '<div class="pf-v6-l-grid__item pf-m-12-col">' +
             '<div class="pf-v6-c-card"><div class="pf-v6-c-card__header"><div class="pf-v6-c-card__header-main">Activity Timeline (' + (activity ? activity.length : 0) + ')</div></div>' +
             '<div class="pf-v6-c-card__body">';
@@ -297,14 +292,12 @@
         }
         html += '</div></div></div>';
 
-        // -- Brief card --
         if (detail.brief) {
             html += '<div class="pf-v6-l-grid__item pf-m-12-col">' +
                 '<div class="pf-v6-c-card"><div class="pf-v6-c-card__header"><div class="pf-v6-c-card__header-main">Brief</div></div>' +
                 '<div class="pf-v6-c-card__body"><pre class="ashigaru-log-pre">' + escapeHtml(detail.brief) + '</pre></div></div></div>';
         }
 
-        // -- Log card --
         if (log && log.trim()) {
             html += '<div class="pf-v6-l-grid__item pf-m-12-col">' +
                 '<div class="pf-v6-c-card"><div class="pf-v6-c-card__header"><div class="pf-v6-c-card__header-main">Combined Log</div></div>' +
@@ -315,7 +308,6 @@
         el.innerHTML = html;
     }
 
-    // ---- Init ----------------------------------------------------------------
 
     function init() {
         renderListPage();

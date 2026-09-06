@@ -13,10 +13,10 @@ def get_repo_config(repo: str, config: Config) -> RepoConfig:
     if not repos_path.exists():
         return RepoConfig()
     try:
-        data = json.loads(repos_path.read_text())
+        repos = json.loads(repos_path.read_text())
     except (json.JSONDecodeError, OSError):
         return RepoConfig()
-    entry = data.get(repo, {})
+    entry = repos.get(repo, {})
     if not entry:
         return RepoConfig()
     return RepoConfig(**entry)

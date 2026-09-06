@@ -8,6 +8,12 @@ from pydantic import BaseModel
 
 
 class Phase(str, Enum):
+    """Run lifecycle phases.
+
+    Everything from EDITING down is a legacy v0.x phase, retained only so
+    existing meta.json files still deserialize. Nothing writes them.
+    """
+
     QUEUED = "queued"
     CLONING = "cloning"
     ANALYZING = "analyzing"
@@ -21,7 +27,6 @@ class Phase(str, Enum):
     FAILED = "failed"
     ESCALATED = "escalated"
     CANCELLED = "cancelled"
-    # Legacy phases from v0.x — kept for backward compat with existing meta.json
     EDITING = "editing"
     GATING = "gating"
     AWAITING_APPROVAL = "awaiting-approval"
