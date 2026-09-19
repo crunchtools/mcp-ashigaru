@@ -1,0 +1,44 @@
+name: Gatehouse
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  guard:
+    name: Protect workflows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Reject workflow changes from untrusted PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR_ASSOC: ${{ github.event.pull_request.author_association }}
+        run: |
+          set -euo pipefail
+          case "$AUTHOR_ASSOC" in
+            OWNER|MEMBER|COLLABORATOR)
+              echo "Author '$AUTHOR_ASSOC' is trusted; allowing."; exit 0 ;;
+          esac
+          changed="$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)"
+          if echo "$changed" | grep -qE '^\.github/workflows/'; then
+            echo "::error::PR modifies .github/workflows/ — not accepted from external contributors."
+            exit 1
+          fi
+          echo "No workflow files changed."
+
+  # Advisory only — posts findings as PR comments and always passes.
+  # Do NOT mark this job a required status check (see crunchtools constitution XII).
+  review:
+    name: Gatehouse review
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: crunchtools/gatehouse/.github/workflows/review.yml@v0.5.0
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
