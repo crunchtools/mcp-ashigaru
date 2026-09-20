@@ -66,7 +66,7 @@ starting cold. `status` reports which tier a run reached.
 
 ## Security model
 
-- **Unprivileged sandbox.** Everything runs as the `devrunner` user on lotor with rootless podman — no root, no sudo, no path to production, prod secrets, or other services. Blast radius = devrunner's sandbox.
+- **Unprivileged sandbox.** Everything runs as the `devrunner` user with rootless podman — no root, no sudo, no path to production, prod secrets, or other services. Blast radius = devrunner's sandbox.
 - **Capability starvation for the agent.** The coding agent's container holds *only* a Claude token. No GitHub token (can't push or touch other repos), no podman socket, no prod creds. Its entire reach is "edit files in this one checkout."
 - **Deterministic wrappers hold the keys.** git/gh, podman gates, and deploy live in fixed bash scripts that can't be prompt-injected — not in the LLM surface and not in the agent.
 - **Production promotion is trust-based, not token-gated.** It is authorized by the maintainer's Signal instruction to Kagetora — designed for phone-driven ops — acting on airlock-filtered content. Defense in depth comes from that filtered content lane plus the fact that a squash-merge is revertable and host rollout is a separate step, not from an out-of-band token the agent would have to hold.
@@ -78,7 +78,7 @@ mcp-ashigaru-crunchtools --transport streamable-http --host 0.0.0.0 --port 8020
 # or: python -m mcp_ashigaru --transport streamable-http --port 8020
 ```
 
-Deployed on lotor as a systemd unit **run under the `devrunner` user**, on the
+Deployed as a systemd unit **run under the `devrunner` user**, on the
 `crunchtools` network, so it inherits the unprivileged sandbox and can reach
 devrunner's rootless podman socket to launch agent containers and run gates.
 
@@ -114,8 +114,8 @@ below are exactly what `Config` falls back to; none are re-read at runtime).
 ## Build & deploy pipeline
 
 - **Image is built and pushed by GHA only — never hand-pushed.** `quay.io/crunchtools/mcp-ashigaru` (+ ghcr) via `.github/workflows/container.yml`, dual-push per the crunchtools constitution. A local `podman push` to the registry is **not** part of the flow.
-- **The repo is public.** Required because crunchtools is a GitHub **Free** org, and Free orgs cannot expose org-level Actions secrets (`QUAY_USERNAME`/`QUAY_PASSWORD`) to **private** repos — the secrets list as "available" via the API but arrive empty at runtime. Public repos get them. (No secrets live in this repo; tokens are runtime env on lotor.)
-- **Deploy** pulls the GHA-built image on lotor and runs it as the `devrunner` systemd unit; adding `dev-runner`/`ashigaru` as a backend in the `kagetora` gateway profile makes it reachable from your phone.
+- **The repo is public.** Required because crunchtools is a GitHub **Free** org, and Free orgs cannot expose org-level Actions secrets (`QUAY_USERNAME`/`QUAY_PASSWORD`) to **private** repos — the secrets list as "available" via the API but arrive empty at runtime. Public repos get them. (No secrets live in this repo; tokens are runtime env on the deployment host.)
+- **Deploy** pulls the GHA-built image and runs it as the `devrunner` systemd unit; making it reachable from an MCP client is the deployment's decision (a gateway backend entry, a tunnel, etc.), not something this repo prescribes.
 
 ## Design decisions & gotchas (the record)
 
@@ -126,12 +126,12 @@ below are exactly what `Config` falls back to; none are re-read at runtime).
 
 ## Roadmap (what's in place)
 
-- [x] Unprivileged `devrunner` sandbox + rootless podman on lotor
+- [x] Unprivileged `devrunner` sandbox + rootless podman
 - [x] Headless Claude Code on subscription token, in a container, validated
 - [x] This server scaffolded (`work_ticket`/`status`/`promote`), GHA → quay (public)
 - [x] Model-escalation model specced
 - [ ] `work-ticket.sh` wrapper implementing the Sonnet→Opus ladder + event persistence
 - [ ] `status` wired to live CI/build checks; `promote.sh` gated deploy
-- [ ] Deploy on lotor (devrunner systemd unit) + add to the `kagetora` gateway profile
+- [ ] Deploy (devrunner systemd unit) + wire into an MCP gateway backend
 - [ ] **Dogfood:** iterate on `mcp-ashigaru` *with* `mcp-ashigaru`
 - [ ] The pool (`ashigaru-1..5`), `webapp` previews, merge-train (see fleet spec)
