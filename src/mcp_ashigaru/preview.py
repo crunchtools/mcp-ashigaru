@@ -145,7 +145,7 @@ async def _healthcheck(port: int, retries: int = 12) -> bool:
             if proc.returncode == 0:
                 return True
         except OSError:
-            pass
+            logger.debug("Healthcheck probe on port %d could not run curl", port)
         await asyncio.sleep(5)
     return False
 

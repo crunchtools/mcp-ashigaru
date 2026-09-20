@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -104,8 +106,6 @@ class RunState:
     def _cleanup_remote_branch(self, meta: RunMeta) -> None:
         if not self._config or not meta.branch:
             return
-        import asyncio
-
         from .git_ops import delete_remote_branch
 
         try:
@@ -179,7 +179,6 @@ class RunState:
         }
 
     def delete(self) -> None:
-        import shutil
         if self._config is not None:
             work_dir = self._config.work_dir / self._dir.name
             if work_dir.exists():

@@ -31,13 +31,14 @@
     }
 
     function phaseBadge(phase) {
-        var cls = "ashigaru-phase-" + (phase || "unknown").replace(/_/g, "-");
+        var safePhase = (phase || "unknown").replace(/[^a-zA-Z0-9_-]/g, "");
+        var cls = "ashigaru-phase-" + safePhase.replace(/_/g, "-");
         return '<span class="pf-v6-c-label pf-m-compact ' + cls + '">' +
-               '<span class="pf-v6-c-label__content">' + (phase || "unknown") + '</span></span>';
+               '<span class="pf-v6-c-label__content">' + escapeHtml(phase || "unknown") + '</span></span>';
     }
 
     function sourceBadge(source) {
-        return '<span class="ashigaru-source-badge">' + (source || "ashigaru") + '</span>';
+        return '<span class="ashigaru-source-badge">' + escapeHtml(source || "ashigaru") + '</span>';
     }
 
     function formatTime(ts) {
@@ -138,10 +139,10 @@
                     '<td class="pf-v6-c-table__td"><code>' + escapeHtml(r.run_id) + '</code></td>' +
                     '<td class="pf-v6-c-table__td ashigaru-title-cell">' + escapeHtml(titleDisplay) + '</td>' +
                     '<td class="pf-v6-c-table__td">' + escapeHtml(r.repo || "") + '</td>' +
-                    '<td class="pf-v6-c-table__td">#' + (r.issue || "") + '</td>' +
+                    '<td class="pf-v6-c-table__td">#' + escapeHtml(String(r.issue || "")) + '</td>' +
                     '<td class="pf-v6-c-table__td">' + phaseBadge(r.phase) + '</td>' +
                     '<td class="pf-v6-c-table__td">' + sourceBadge(r.source) + '</td>' +
-                    '<td class="pf-v6-c-table__td">' + (r.current_tier || "") + '</td>' +
+                    '<td class="pf-v6-c-table__td">' + escapeHtml(r.current_tier || "") + '</td>' +
                     '<td class="pf-v6-c-table__td">' + prLink + '</td>' +
                     '<td class="pf-v6-c-table__td">' + formatTime(r.created) + '</td>' +
                     '<td class="pf-v6-c-table__td">' + deleteBtn + '</td>' +
@@ -214,7 +215,7 @@
             var title = detail.title || detail.run_id;
             header.innerHTML = '<div class="pf-v6-c-content">' +
                 '<h1>' + escapeHtml(title) + '</h1>' +
-                '<p>' + escapeHtml(detail.repo) + ' #' + detail.issue +
+                '<p>' + escapeHtml(detail.repo) + ' #' + escapeHtml(String(detail.issue)) +
                 ' &mdash; ' + phaseBadge(detail.phase) + ' ' + sourceBadge(detail.source) + '</p>' +
                 '</div>';
         }

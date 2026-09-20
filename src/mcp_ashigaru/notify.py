@@ -14,7 +14,9 @@ import hmac
 import json
 import logging
 import shlex
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.request import Request, urlopen
 
 if TYPE_CHECKING:
     from .config import Config
@@ -23,6 +25,8 @@ if TYPE_CHECKING:
 
 _PENDING_THREAD = "pending"
 WEBHOOK_TIMEOUT_SECONDS = 30
+NOTIFY_COMMAND_TIMEOUT_SECONDS = 30
+MATRIX_SYNC_TIMEOUT_MS = 10000
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +48,6 @@ class MatrixNotifier:
         self._ready = False
 
     async def start(self) -> None:
-        from pathlib import Path
-
         from nio import AsyncClient, AsyncClientConfig, WhoamiError
 
         store_path = self._crypto_dir
@@ -81,13 +83,13 @@ class MatrixNotifier:
             await self._client.keys_upload()
 
         await self._client.sync(
-            timeout=10000,
+            timeout=MATRIX_SYNC_TIMEOUT_MS,
             full_state=True,
             sync_filter={"room": {"timeline": {"limit": 0}}},
         )
 
         self._ready = True
-        print(f"[ashigaru] Matrix E2EE notifier ready: {resp.user_id}")
+        logger.info("Matrix E2EE notifier ready: %s", resp.user_id)
 
     async def stop(self) -> None:
         if self._client:
@@ -163,9 +165,8 @@ async def init_matrix(config: Config) -> None:
     )
     try:
         await _matrix_notifier.start()
-        print(f"[ashigaru] Matrix E2EE notifier initialized: {_matrix_notifier._room_id}")
-    except Exception as exc:
-        print(f"[ashigaru] Failed to initialize Matrix notifier: {exc}")
+        logger.info("Matrix E2EE notifier initialized: %s", _matrix_notifier._room_id)
+    except Exception:
         logger.exception("Failed to initialize Matrix notifier")
         _matrix_notifier = None
 
@@ -186,8 +187,6 @@ def _format_heartbeat(meta: RunMeta, elapsed_minutes: int, last_activity: str) -
 
 
 def _send_webhook(url: str, secret: str, message: str) -> None:
-    from urllib.request import Request, urlopen
-
     if not url.startswith(("http://", "https://")):
         raise ValueError(f"Webhook URL must be http(s): {url}")
     payload = json.dumps({"body": message}).encode()
@@ -213,7 +212,7 @@ async def _send_cmd(cmd: str, message: str) -> None:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=NOTIFY_COMMAND_TIMEOUT_SECONDS)
     if proc.returncode != 0:
         logger.warning(
             "Notify command exited %d: %s",
