@@ -66,7 +66,6 @@ class ActivityKind(str, Enum):
     PREVIEW_OP = "preview_op"
     FEEDBACK = "feedback"
     REGISTRATION = "registration"
-    REVIEW_OP = "review_op"
     ERROR = "error"
     NOTE = "note"
 

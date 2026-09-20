@@ -82,6 +82,35 @@ Deployed on lotor as a systemd unit **run under the `devrunner` user**, on the
 `crunchtools` network, so it inherits the unprivileged sandbox and can reach
 devrunner's rootless podman socket to launch agent containers and run gates.
 
+## Environment Variables
+
+All variables are optional and read once at process start (dataclass defaults
+below are exactly what `Config` falls back to; none are re-read at runtime).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ASHIGARU_STATE_DIR` | `/home/devrunner/ashigaru` | Root directory for run state; `runs/` and `work/` are subdirectories of this. |
+| `ASHIGARU_ORG` | `crunchtools` | GitHub org Ashigaru operates against. |
+| `ASHIGARU_AGENT_IMAGE` | `quay.io/crunchtools/mcp-ashigaru-agent-claude:latest` | Container image launched to run the coding agent. |
+| `CONTAINER_HOST` | `unix:///run/podman/podman.sock` | Podman socket for containers created from *inside* Ashigaru's own container. |
+| `ASHIGARU_HOST_PODMAN` | `unix:///run/host-podman/podman.sock` | Podman socket for the *host's* podman (bind-mounted in), used for privileged host-level operations such as preview deployments. |
+| `ASHIGARU_SLOTS_DIR` | `/srv/ashigaru/slots` | Directory holding per-slot lock files for the preview-slot allocator. |
+| `ASHIGARU_CONFIG_DIR` | `/srv/ashigaru/config` | Directory for repo-specific gate/config files. |
+| `ASHIGARU_MAX_SLOTS` | `5` | Maximum number of concurrent preview deployment slots. |
+| `GH_TOKEN` | `""` | GitHub token used for git clone/push and `gh` CLI operations against the target repo. Not validated at startup -- git/gh operations fail downstream if unset. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `""` | Claude Code OAuth token passed into the coding agent's container (its *only* credential -- see Security model). |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | Default Claude model for agent runs when a run doesn't request a specific tier. |
+| `ASHIGARU_NOTIFY_CMD` | `""` | Shell-command notification channel; disabled unless set. The command is `shlex.split()` into argv (no shell) with the message appended as the final argument. Independent of the webhook and Matrix channels -- all configured channels fire on every notification. |
+| `ASHIGARU_NOTIFY_WEBHOOK` | `""` | HTTP(S) webhook notification channel; disabled unless set. POSTed as JSON with an `X-Hub-Signature-256` HMAC-SHA256 header. |
+| `ASHIGARU_NOTIFY_WEBHOOK_SECRET` | `""` | HMAC signing secret for `ASHIGARU_NOTIFY_WEBHOOK`. |
+| `ASHIGARU_HEARTBEAT_INTERVAL` | `300` | Seconds between heartbeat notifications while a run is active. Heartbeats are skipped entirely if set to `0` or less. |
+| `ASHIGARU_MATRIX_HOMESERVER` | `""` | Matrix homeserver URL for E2EE notifications. The Matrix channel only activates when this, `ASHIGARU_MATRIX_ACCESS_TOKEN`, and `ASHIGARU_MATRIX_ROOM_ID` are all set. |
+| `ASHIGARU_MATRIX_ACCESS_TOKEN` | `""` | Matrix account access token. |
+| `ASHIGARU_MATRIX_ROOM_ID` | `""` | Matrix room ID notifications are posted to. |
+| `ASHIGARU_MATRIX_MENTION_USER` | `""` | Matrix user ID to @-mention on each notification. No mention is added if unset. |
+| `ASHIGARU_MATRIX_DEVICE_ID` | `ASHIGARU_BOT` | Matrix device ID for the E2EE session. |
+| `ASHIGARU_MATRIX_CRYPTO_DIR` | `""` | Directory for the Matrix E2EE crypto store. Empty means no persistent store is loaded (session-only). |
+
 ## Build & deploy pipeline
 
 - **Image is built and pushed by GHA only — never hand-pushed.** `quay.io/crunchtools/mcp-ashigaru` (+ ghcr) via `.github/workflows/container.yml`, dual-push per the crunchtools constitution. A local `podman push` to the registry is **not** part of the flow.

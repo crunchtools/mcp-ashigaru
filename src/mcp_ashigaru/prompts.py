@@ -19,7 +19,9 @@ def feature_workflow(repo: str, issue: str, title: str) -> str:
 
     Provides the step-by-step playbook for driving a feature using Ashigaru
     tools. Any agent (Josui on desktop, Kagetora on phone) can follow this.
-    Cross-agent handoff is seamless at any step via the run_id.
+    Cross-agent handoff works at any step via the run_id, since all
+    state lives in Ashigaru's on-disk run store rather than any one
+    agent's session.
     """
     return f"""# Feature Workflow: {title} ({repo} #{issue})
 
@@ -94,7 +96,8 @@ Look up the IMAGE and SERVICE from the service registry:
 At any step, you can hand off to another agent. Just tell them the run_id.
 They call `status(run_id)` to see where things stand and pick up from there.
 Scott can start on Josui (desktop), walk away, Kagetora (phone) continues,
-Scott comes back to Josui — seamless, because all state is in Ashigaru."""
+Scott comes back to Josui — no state is lost, because it all lives
+in Ashigaru's run store, not in either agent's session."""
 
 
 def deploy_workflow(repo: str) -> str:

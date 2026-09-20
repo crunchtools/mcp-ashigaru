@@ -11,6 +11,8 @@ from pathlib import Path
 from .config import Config
 from .models import SlotLock
 
+SLOT_BASE_PORT = 8099
+
 
 class SlotManager:
     def __init__(self, config: Config) -> None:
@@ -89,7 +91,7 @@ class SlotManager:
 
         for n in range(1, self._max + 1):
             if not self._read_lock(n):
-                port = 8099 + n
+                port = SLOT_BASE_PORT + n
                 lock = SlotLock(
                     run_id=run_id, repo=repo, branch=branch,
                     container=f"development{n}", slot=n,

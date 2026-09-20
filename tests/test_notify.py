@@ -92,16 +92,28 @@ def test_fire_phase_change_skips_nonterminal(webhook_cfg: Config) -> None:
 
 def test_fire_phase_change_includes_failure_reason(webhook_cfg: Config) -> None:
     meta = _make_meta(Phase.FAILED, failure_reason="pytest exit code 1")
-    with patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop:
+    with (
+        patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop,
+        patch("mcp_ashigaru.notify._deliver", new_callable=AsyncMock) as mock_deliver,
+    ):
         mock_loop.return_value.create_task = lambda coro: coro.close()
         fire_phase_change(meta, Phase.IMPLEMENTING, Phase.FAILED, webhook_cfg)
+        mock_deliver.assert_called_once()
+        message = mock_deliver.call_args[0][0]
+        assert "pytest exit code 1" in message
 
 
 def test_fire_phase_change_includes_pr_url(webhook_cfg: Config) -> None:
     meta = _make_meta(Phase.AWAITING_REVIEW, pr_url="https://github.com/crunchtools/rotv/pull/42")
-    with patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop:
+    with (
+        patch("mcp_ashigaru.notify.asyncio.get_running_loop") as mock_loop,
+        patch("mcp_ashigaru.notify._deliver", new_callable=AsyncMock) as mock_deliver,
+    ):
         mock_loop.return_value.create_task = lambda coro: coro.close()
         fire_phase_change(meta, Phase.VALIDATING, Phase.AWAITING_REVIEW, webhook_cfg)
+        mock_deliver.assert_called_once()
+        message = mock_deliver.call_args[0][0]
+        assert "https://github.com/crunchtools/rotv/pull/42" in message
 
 
 def test_format_heartbeat() -> None:

@@ -1,31 +1,72 @@
-# Gourmand exceptions.
-#
-# Every entry needs a justification that says WHY the finding is wrong or why
-# the code is right anyway. "Baseline: N violations - review and fix" is not a
-# justification — the whole file used to read that way, and every one of those
-# entries has now either been fixed or replaced below.
 
 [[exceptions]]
-check = "summary_litter"
-path = "CLAUDE.md"
-justification = "Required by the CrunchTools constitution as the project's agent instructions; it is not a status report."
-
-[[exceptions]]
-check = "verbose_comments"
-path = "src/mcp_ashigaru/prompts.py"
-justification = "Gourmand bug: this file is nothing but markdown workflow playbooks returned from @mcp.prompt(). Its Python scanner treats a `#` heading inside a triple-quoted string as a comment, so every `## Step N` in the playbook text counts as a violation. The playbooks were moved out of server.py into this file specifically so the miscount is confined here instead of masking real comment slop in the server."
-
-[[exceptions]]
-check = "lint_suppression"
+check = "EV001-lint_suppression"
 path = "src/mcp_ashigaru/notify.py"
 justification = "Two `# noqa: S310` on urllib Request/urlopen. S310 asks for the URL scheme to be checked, and _send_webhook checks it two lines earlier, raising ValueError on anything but http(s). The suppression records that the audit was done, which is the correct use of noqa."
+classification = "by_design"
 
 [[exceptions]]
-check = "single_use_helpers"
+check = "CH001-absolute_paths"
+path = "src/mcp_ashigaru/agent.py"
+justification = "The flagged literal sets the HOME environment variable (podman run ... -e HOME=<value>) inside the ephemeral, rootless-mapped agent container this line launches. It names a path inside that container's own filesystem, not on the host running mcp-ashigaru -- there is nothing to break across host machines."
+classification = "by_design"
+
+[[exceptions]]
+check = "CH001-absolute_paths"
+path = "src/mcp_ashigaru/config.py"
+justification = "ASHIGARU_STATE_DIR, ASHIGARU_SLOTS_DIR, and ASHIGARU_CONFIG_DIR are environment-variable-overridable defaults (each read via os.environ.get with the literal as fallback, verified against source). Ashigaru is single-operator deployment tooling for a known set of hosts, not a redistributable server whose defaults need to work on an arbitrary machine; every one of these is documented in the README's Environment Variables table alongside its override."
+classification = "by_design"
+
+[[exceptions]]
+check = "CH001-absolute_paths"
+path = "src/mcp_ashigaru/prompts.py"
+justification = "This is the deploy_workflow runbook returned by an @mcp.prompt() endpoint -- a single-operator ops playbook, not portable source code. The rest of the same playbook hardcodes 'ssh -p 22422 root@lotor.dc3.crunchtools.com' and 'systemctl restart mcp-airlock.crunchtools.com' throughout; the two local-checkout paths for Scott's own machines are the same category of intentional, operator-specific detail, not a portability bug to fix."
+classification = "by_design"
+
+[[exceptions]]
+check = "CQ007-agent_scaffolding"
+path = "src/mcp_ashigaru/prompts.py"
+justification = "Same root cause as this file's existing CQ005-verbose_comments exception: prompts.py returns markdown runbooks from @mcp.prompt() endpoints named feature_workflow and deploy_workflow. 'Step N:' headings are the runbook's own domain vocabulary -- the numbered sequence IS the deliverable an agent is meant to follow -- not leftover scaffolding debris from a coding agent's own multi-step planning. The function names themselves (feature_workflow, deploy_workflow) are the named concept the check's own by_design carve-out asks for."
+classification = "gourmand_bug"
+
+[[exceptions]]
+check = "SE001-security_practices"
 path = "cockpit-ashigaru/ashigaru.js"
-justification = "A Cockpit single-page app. renderListPage, renderDetailPage, renderDetailContent, startAutoRefresh and init are dispatched from the router and the page lifecycle, so each has exactly one textual call site by construction. Merging them would produce one unreadable render function."
+justification = "Eight innerHTML assignments, reviewed individually. Two (renderListPage's initial shell, renderDetailPage's initial shell) assign a 100% static HTML literal with no interpolation at all -- previously triaged as not exploitable. The remaining six interpolate values into the HTML, and every one of those values is passed through escapeHtml() (or, for phaseBadge/sourceBadge's phase and source parameters, now escaped -- fixed as part of this migration rather than excepted, since it was a real gap) before insertion. SE001 does not do the dataflow analysis to see the escaping; it flags any .innerHTML assignment categorically."
+classification = "by_design"
 
 [[exceptions]]
-check = "single_use_helpers"
-path = "src/mcp_ashigaru/runner.py"
-justification = "_infer_sub_phase is a six-line pure lookup from ActivityKind to Phase. Its only caller, _process_event, is already four levels deep inside a loop; inlining would deepen it further for no gain."
+check = "DC005-dead_variants"
+path = "src/mcp_ashigaru/models.py"
+justification = "Phase.EDITING, Phase.GATING, Phase.AWAITING_APPROVAL, Phase.ON_DEV, Phase.DEPLOYING_PREVIEW, and Phase.PREPARING are all reached via Phase(phase_str) in heartbeat.py and server.py -- value-based enum construction, which DC005's own documented Python limitation says is undetectable ('ClassName(value) ... not counted as accesses'). Confirmed each is a real stored phase string this code can read back, not a member with no live path to construction. (ActivityKind.REVIEW_OP, the other DC005 hit in this file, had no construction site anywhere including dynamic lookup -- that one was genuinely dead and was deleted rather than excepted.)"
+classification = "gourmand_bug"
+
+[[exceptions]]
+check = "CH012-copy_paste_detection"
+path = "src/mcp_ashigaru/slots.py"
+justification = "SlotManager._write_lock (mkdir the slot directory, write a JSON lock file) and RunState.create (mkdir the run directory, write meta.json, then also construct and append a registration Activity) match on the shared mkdir-then-write_text idiom's 3-statement shape. They initialize two unrelated kinds of on-disk state; create() does substantially more beyond the coincidentally-matching prefix, and there is no shared behavior to extract."
+classification = "gourmand_bug"
+
+[[exceptions]]
+check = "EV004-redundant_error_handling"
+path = "src/mcp_ashigaru/notify.py"
+justification = "send_heartbeat is a best-effort background side channel: fired periodically while a run is in progress, purely informational. Letting a TimeoutError or other exception propagate from a failed heartbeat delivery would crash the calling loop over a non-critical notification; logging and continuing is the correct behavior, not a bug hidden behind a log line."
+classification = "by_design"
+
+[[exceptions]]
+check = "EV004-redundant_error_handling"
+path = "src/mcp_ashigaru/preview.py"
+justification = "_healthcheck polls up to 12 times, 5 seconds apart, waiting for a preview server to come up; an OSError from failing to spawn curl on one attempt is exactly the transient condition the retry loop exists to absorb -- the function already returns False if every attempt is exhausted. A debug log was added at the same site (this migration) so a genuinely missing curl binary is still visible in logs, but propagating the exception would abort the retry loop on a single blip instead of giving the preview server time to start."
+classification = "by_design"
+
+[[exceptions]]
+check = "EV002-manifest_lint_suppression"
+path = "pyproject.toml"
+justification = "Each remaining global ruff ignore was verified against this codebase with the project's own pinned toolchain (`uv run ruff check --select <RULE>`, ignore list temporarily cleared for an unmasked read) before being kept: TRY003 and PLW0603 (notify.py, long exception messages and the module-level _matrix_notifier lazy singleton), PLR0913/PLR0917 (5 src/ files -- agent.py, git_ops.py, notify.py, runner.py, server.py -- MCP tool signatures mirror the wire API), S607 (git_ops.py, launching git/gh by name is the point of the module), TC001/TC002/TC003 (10 src/ files, runtime-needed imports ruff's type-checking-only heuristic misreads as type-only), PLC0415 (4 src/ files plus tests, deferred imports for circular-dependency avoidance -- the codebase's own established idiom), RUF006 (notify.py, server.py, state.py -- intentional fire-and-forget background tasks: notification delivery, the scheduler thread, cleanup). Three previously-global entries with zero hits anywhere (TID252, S603, S105) were dropped as dead. S101 (assert), S106 (a literal token value in a test fixture), and PLR2004 (magic numbers in test assertions) were moved from the global ignore into `[tool.ruff.lint.per-file-ignores]` for tests/* -- all three fire only in tests/, never in src/."
+classification = "by_design"
+
+[[exceptions]]
+check = "EV013-hidden_env_config"
+path = "src/mcp_ashigaru/config.py"
+justification = "All 21 flagged variables are the dataclass fields of Config, defined and read exactly once at process start. Every default in the new README.md Environment Variables table was copied from this file's actual `os.environ.get(...)` fallback literals (not from a docstring or comment), and cross-checked against each variable's real downstream usage where the name alone was ambiguous: heartbeat_interval is consumed by asyncio.sleep() and is therefore seconds, not minutes; container_host vs. host_podman are two distinct podman sockets (the container's own local socket vs. the host's, bind-mounted in) rather than duplicates, confirmed in podman_utils.hpodman(); notify_cmd, notify_webhook, and matrix_* are three independent notification channels that all fire when configured, not mutually exclusive alternatives, confirmed in notify._deliver(). GH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN default to empty and are not validated at startup -- the table says so explicitly rather than marking them falsely optional. EV013 has no documentation detection of its own -- it only compares each var name against a fixed allowlist -- so this exception is the record that a human read the actual source, not the docstrings, before writing the table down."
+classification = "by_design"
