@@ -11,6 +11,8 @@ The supported wiring is one caller file, copied unchanged. Everything a reposito
 **Organization**
 
 1. Create a GitHub App. Repository permissions: Contents, Issues, Pull requests read and write; Metadata read. No Workflows permission, no organization permissions. Install it on the repositories to enroll.
+   - Permissions added after installation are not live until accepted. If the app is created or installed before its repository permissions are set, the installation keeps its old permissions until an organization owner accepts the request on the installation's settings page. Until then `actions/create-github-app-token` fails when a workflow asks for `issues: write` or `pull-requests: write`. Check with `gh api orgs/<org>/installations --jq '.installations[] | select(.app_slug=="<slug>") | .permissions'`; `contents`, `issues` and `pull_requests` must show `write`.
+   - The sweep needs the app installed on every repository it should reach. `sweep.yml` mints an owner-wide token and can only label issues in repositories the installation covers.
 2. Secrets: `ASHIGARU_APP_ID`, `ASHIGARU_APP_KEY` (the app's private key), `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`), and optionally `OPENROUTER_API_KEY` for the Gatehouse pre-commit hook.
 3. Variable: `ASHIGARU_ENABLED` = `true`.
 4. A branch ruleset with your required checks, without a bypass for the app. Allow auto-merge on each repository.
