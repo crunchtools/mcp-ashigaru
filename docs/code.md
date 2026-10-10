@@ -27,7 +27,7 @@ Hook failures that survive two passes do not block the pull request: the reposit
 
 ```yaml
 code:
-  uses: crunchtools/ashigaru/.github/workflows/code.yml@v2.0.0
+  uses: crunchtools/ashigaru/.github/workflows/code.yml@v2.0.1
   with:
     model: "sonnet"
     max_turns: 80

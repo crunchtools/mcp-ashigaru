@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-10
+
+### Security
+
+- The caller's `fix` job now requires the pull request branch to live in the same repository before any secret is passed to `fix.yml`. `fix.yml` already refused forks; the caller now shows it too, so a reviewer reading only the caller can see the boundary.
+
 ### Documentation
 
 - Enrollment: say that permissions added after installation must be accepted by an organization owner, how to check, and that the sweep reaches only repositories the app is installed on.

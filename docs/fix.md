@@ -26,7 +26,7 @@ A `not a bug` reply is the agent judging a finding on its own pull request. Noth
 
 ```yaml
 fix:
-  uses: crunchtools/ashigaru/.github/workflows/fix.yml@v2.0.0
+  uses: crunchtools/ashigaru/.github/workflows/fix.yml@v2.0.1
   with:
     max_rounds: 3
     escalate_at: 2

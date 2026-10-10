@@ -24,7 +24,7 @@ Triage runs when someone with write access opens an issue, and when `ready-for-t
 
 ```yaml
 triage:
-  uses: crunchtools/ashigaru/.github/workflows/triage.yml@v2.0.0
+  uses: crunchtools/ashigaru/.github/workflows/triage.yml@v2.0.1
   with:
     auto_code_categories: "bug,documentation"   # keep performance work for a person
     min_confidence: "0.8"
