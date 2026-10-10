@@ -42,3 +42,22 @@ def test_a_label_created_by_a_concurrent_run_is_not_an_error(monkeypatch):
     monkeypatch.setattr(common, "api_pages", lambda path: [])
     monkeypatch.setattr(common, "gh", create)
     assert common.ensure_labels("o/r", [common.TRIAGED]) == {common.TRIAGED}
+
+
+def test_an_unexpected_lookup_failure_is_refused_and_reported(monkeypatch, capsys):
+    def fail(path):
+        raise subprocess.CalledProcessError(1, "gh", stderr="HTTP 502")
+
+    monkeypatch.setattr(common, "api", fail)
+    assert common.can_write("o/r", "someone") is False
+    assert "permission lookup for someone on o/r failed" in capsys.readouterr().out
+
+
+def test_other_label_creation_failures_propagate(monkeypatch):
+    def create(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, "gh", stderr="HTTP 403")
+
+    monkeypatch.setattr(common, "api_pages", lambda path: [])
+    monkeypatch.setattr(common, "gh", create)
+    with pytest.raises(subprocess.CalledProcessError):
+        common.ensure_labels("o/r", [common.TRIAGED])
