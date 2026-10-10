@@ -1,6 +1,6 @@
 # ashigaru Constitution
 
-> **Version:** 2.0.0
+> **Version:** 2.0.1
 > **Ratified:** 2026-10-10
 > **Status:** Active
 > **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.23.0

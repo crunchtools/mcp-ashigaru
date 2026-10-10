@@ -112,3 +112,8 @@ def test_the_fix_job_ignores_runs_that_a_reply_started():
 
 def test_changelog_has_this_version():
     assert f"## [{VERSION}]" in (ROOT / "CHANGELOG.md").read_text()
+
+
+def test_the_caller_passes_secrets_to_fix_only_for_this_repository():
+    condition = yaml.safe_load((ROOT / "examples" / "ashigaru.yml").read_text())["jobs"]["fix"]["if"]
+    assert "head_repository.full_name == github.repository" in condition
