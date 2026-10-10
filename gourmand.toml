@@ -4,9 +4,6 @@
 # Path exclusions: Gourmand ignores [global] excluded_paths in this file.
 # Use .gitignore, or .gourmand-exceptions.d/globals.toml for tracked paths.
 
-[checks]
-conditional_wrapper = false
-
 [severity]
 # Override severity levels for specific checks
 # check_name = "warning"  # Options: error, warning, info
@@ -15,8 +12,3 @@ conditional_wrapper = false
 # Output format options
 format = "text"  # Options: text, json, github
 color = true
-
-[[check_overrides]]
-check = "CH017-conditional_wrapper"
-justification = "Fires on any function whose first statement is an `if` with a return -- the ordinary Python guard clause. Re-verified against 0.16.5: it still flags resolve_tier() (a two-line pure function mapping a model hint to a tier number), RunState.get_log() (early-return when a specific log file does not exist, before falling into the multi-file concatenation branch), and ActivityLog.classify_tool_call() (a dispatch table returning early per matched tool name). In each case, moving the condition to the call site means leaking an implementation detail -- the model-name substring match, the log-file-existence probe, or the tool-name dispatch table -- into every caller. That makes the codebase worse, not better."
-classification = "gourmand_bug"

@@ -1,2 +1,1 @@
 # Paths Gatehouse never reviews (gitignore syntax). Read from the base branch in CI.
-uv.lock

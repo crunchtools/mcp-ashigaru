@@ -1,22 +1,12 @@
-# Canonical Dependabot config for crunchtools Python projects using uv.
-# Drop in as .github/dependabot.yml. See constitution.md Section XV.
+# Drop in as .github/dependabot.yml. See constitution.md XV.
 #
-# Covers both ecosystems that go stale silently if left unpinned:
-#   - uv:            uv.lock (must be committed, never gitignored)
-#   - github-actions: `uses: some-action@vX.Y.Z` pins in .github/workflows/
+# github-actions is required for every repo. Add the ecosystems your profile
+# names (uv for MCP Server and CLI Tool; see examples/dependabot-uv.yml).
+# crunchtools/constitution is ignored: its pin moves with `Inherits:` through
+# scripts/fleet-bump.py, and a lone pin bump would fail validation.
 
 version: 2
 updates:
-  - package-ecosystem: "uv"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    groups:
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

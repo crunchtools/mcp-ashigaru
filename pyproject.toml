@@ -1,82 +1,21 @@
-[project]
-name = "mcp-ashigaru-crunchtools"
-version = "1.1.0"
-description = "CrunchTools dev-ops backbone — drives features from ticket to production across all agents"
-requires-python = ">=3.10"
-license = "AGPL-3.0-or-later"
-authors = [
-    { name = "crunchtools.com" }
-]
-readme = "README.md"
-keywords = ["mcp", "agents", "claude-code", "devops", "fastmcp"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-]
-dependencies = [
-    "fastmcp>=2.0",
-    "pydantic>=2.0",
-    "matrix-nio[e2e]>=0.24,<1.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.24",
-    "ruff>=0.8",
-    "mypy>=1.13",
-]
-
-[project.scripts]
-mcp-ashigaru-crunchtools = "mcp_ashigaru:main"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/mcp_ashigaru"]
+# Tool configuration only. Ashigaru ships workflows and scripts, not a package;
+# the scripts use the standard library and the `gh` CLI the runner provides.
 
 [tool.ruff]
-line-length = 100
-target-version = "py310"
+line-length = 110
+target-version = "py312"
+src = ["scripts"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP", "S", "B", "C4", "C901", "DTZ", "T10", "ISC", "PIE", "PT", "RET", "SIM", "TID", "TCH", "ARG", "PLC", "PLE", "PLR", "PLW", "TRY", "RUF"]
-ignore = [
-    "TRY003",   # long exception messages ok
-    "PLR0913",  # many arguments ok for tools
-    "PLR0917",  # ditto, positional: MCP tool signatures mirror the wire API
-    "PLW0603",  # global statement ok for singletons
-    "S607",     # launching bash/podman by name is intentional
-    "TC001",    # runtime imports flagged as type-only (Config, etc.)
-    "TC002",    # runtime imports flagged as type-only (starlette)
-    "TC003",    # runtime imports flagged as type-only (Path, etc.)
-    "PLC0415",  # deferred imports for circular dep avoidance
-    "RUF006",   # fire-and-forget tasks are intentional (background runners)
-]
-
-[tool.ruff.lint.pylint]
-max-branches = 15
-max-statements = 60
+select = ["E", "F", "I", "B", "UP", "SIM", "C90", "PLR"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "S106", "PLR2004"]
-
-
-[tool.mypy]
-[[tool.mypy.overrides]]
-module = "nio.*"
-ignore_missing_imports = true
+[tool.ruff.lint.pylint]
+max-branches = 10
+max-statements = 50
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
+pythonpath = ["scripts"]
 testpaths = ["tests"]
