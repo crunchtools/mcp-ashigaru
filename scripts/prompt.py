@@ -18,18 +18,19 @@ from common import api, api_pages, can_write
 PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
 BODY_LIMIT = 20_000
 COMMENT_LIMIT = 4_000
+COMMENTS_KEPT = 20
 LOG_LIMIT = 20_000
 SLOT = re.compile(r"\{\{(\w+)\}\}")
 
 
 def trusted_comments(repo: str, comments: list[dict]) -> str:
-    """Comments by people with write access. Bots and everyone else are dropped."""
+    """The latest comments by people with write access. Bots and everyone else are dropped."""
     kept = [
         f"[{comment['user']['login']}] {comment['body'][:COMMENT_LIMIT]}"
         for comment in comments
         if comment["user"].get("type") == "User" and can_write(repo, comment["user"]["login"])
     ]
-    return "\n\n".join(kept) or "(none)"
+    return "\n\n".join(kept[-COMMENTS_KEPT:]) or "(none)"
 
 
 def render(template: str, values: dict[str, str]) -> str:

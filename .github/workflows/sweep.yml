@@ -34,8 +34,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Always the default branch: a manual run started from another branch must
+      # not put that branch's scripts next to the app token.
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Mint the Ashigaru app token

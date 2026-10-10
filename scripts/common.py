@@ -54,7 +54,9 @@ def can_write(repo: str, login: str) -> bool:
     """
     try:
         found = api(f"repos/{repo}/collaborators/{login}/permission")
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as error:
+        if "404" not in error.stderr:  # 404 is the API's answer for "not a collaborator"
+            print(f"::warning::permission lookup for {login} on {repo} failed: {error.stderr.strip()}")
         return False
     return found.get("permission") in WRITE_PERMISSIONS
 
@@ -81,7 +83,11 @@ def ensure_labels(repo: str, names: list[str]) -> set[str]:
         if name in existing or name not in STATE_LABELS:
             continue
         color, description = STATE_LABELS[name]
-        gh("label", "create", name, "--repo", repo, "--color", color, "--description", description)
+        try:
+            gh("label", "create", name, "--repo", repo, "--color", color, "--description", description)
+        except subprocess.CalledProcessError as error:
+            if "already exists" not in error.stderr:  # another run created it first
+                raise
         existing.add(name)
     return existing
 

@@ -33,3 +33,12 @@ def test_lookups_are_made_once_per_account(monkeypatch):
     monkeypatch.setattr(common, "api", lambda path: calls.append(path) or {"permission": "write"})
     assert common.can_write("o/r", "a") and common.can_write("o/r", "a")
     assert len(calls) == 1
+
+
+def test_a_label_created_by_a_concurrent_run_is_not_an_error(monkeypatch):
+    def create(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, "gh", stderr="label already exists")
+
+    monkeypatch.setattr(common, "api_pages", lambda path: [])
+    monkeypatch.setattr(common, "gh", create)
+    assert common.ensure_labels("o/r", [common.TRIAGED]) == {common.TRIAGED}

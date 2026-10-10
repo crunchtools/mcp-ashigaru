@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from collections.abc import Callable
 
 from common import READY_FOR_TRIAGE, STATE_LABELS, api, api_pages, can_write, ensure_labels, gh
 
@@ -35,7 +36,7 @@ def candidates(repo: str, issues: list[dict]) -> list[dict]:
     ]
 
 
-def select(found: list[dict], limit: int, writes=can_write) -> list[dict]:
+def select(found: list[dict], limit: int, writes: Callable[[str, str], bool] = can_write) -> list[dict]:
     """Oldest first across every repo, authors with write access only, at most `limit`."""
     chosen: list[dict] = []
     for item in sorted(found, key=lambda item: (item["created_at"], item["repo"], item["number"])):
