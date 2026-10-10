@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- Enrollment: say that permissions added after installation must be accepted by an organization owner, how to check, and that the sweep reaches only repositories the app is installed on.
+
 ## [2.0.0] - 2026-10-10
 
 Ashigaru is rebuilt from scratch. Version 1 was an MCP server on a host that
