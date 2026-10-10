@@ -6,6 +6,45 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-10
+
+Ashigaru is rebuilt from scratch. Version 1 was an MCP server on a host that
+worked a ticket when an operator told another agent to dispatch it; it opened
+its last pull request in June. Version 2 is a set of reusable GitHub Actions
+workflows that watch a repository's issues and fix the bug-class ones without
+being asked. Nothing from version 1 is kept: no server, no container image, no
+MCP tools.
+
+### Added
+- `triage.yml`: classifies a new issue. Bug, documentation and performance
+  issues are labeled `ready-to-code`; features are labeled `triaged` and left
+  for a maintainer; unclear ones get `needs-info`.
+- `code.yml`: fixes a `ready-to-code` issue. The agent edits a checkout with a
+  read-only token, the repository's pre-commit hooks run over the result on the
+  same runner and failures go back to the same session (at most twice), then a
+  second job on a fresh runner pushes `ashigaru/issue-N`, opens the pull
+  request and turns on auto-merge.
+- `fix.yml`: after each Gatehouse review of an Ashigaru pull request, answers
+  every finding in its thread (`fixed in <sha>` or `not a bug: <reason>`) and
+  fixes failed checks, for at most five rounds; then labels the pull request
+  `needs-human`, turns auto-merge off and stops.
+- `sweep.yml`: each night queues the five oldest untriaged issues across
+  enrolled repos.
+- `examples/ashigaru.yml`: the one file that enrolls a repository.
+- Organization variable `ASHIGARU_ENABLED`: every workflow stops at its first
+  step unless it is `true`.
+
+### Removed
+- The MCP server and all of its tools (`create_run`, `dispatch_worker`,
+  `status`, `promote` and the rest), the worker container image, the preview
+  deployer, the Matrix and webhook notifications and the Cockpit plugin.
+- The `quay.io/crunchtools/mcp-ashigaru` and `mcp-ashigaru-agent-claude`
+  images are no longer built.
+
+### Changed
+- The repository is renamed from `mcp-ashigaru` to `ashigaru` and moves from
+  the MCP Server profile to Workflow Automation (constitution v1.23.0).
+
 ## [1.1.0] - 2026-10-10
 
 ### Added

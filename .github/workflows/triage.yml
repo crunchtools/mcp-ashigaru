@@ -1,0 +1,133 @@
+# Ashigaru triage (reusable) — classify one issue, then label it.
+#
+# Two jobs with different authority:
+#   • classify — runs the LLM. Read-only token, read-only tools. It returns a
+#                verdict as structured output and can change nothing.
+#   • apply    — no LLM. Turns the verdict into a label and a comment.
+#
+# bug / documentation / performance -> ready-to-code (the caller chains code.yml)
+# feature                           -> triaged       (waits for a maintainer)
+# question / unclear / needs_info   -> needs-info
+#
+# The guard runs first and is plain code: an issue from an account without
+# write access never reaches the agent unless a maintainer labels it.
+
+name: Ashigaru triage
+
+on:
+  workflow_call:
+    inputs:
+      auto_code_categories:
+        description: "Categories that go straight to the code agent."
+        type: string
+        default: "bug,documentation,performance"
+      min_confidence:
+        description: "Below this confidence a verdict is left for a maintainer."
+        type: string
+        default: "0.7"
+      model:
+        type: string
+        default: "sonnet"
+      max_turns:
+        type: number
+        default: 40
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+    outputs:
+      auto_code:
+        description: "'true' when the issue was labeled ready-to-code."
+        value: ${{ jobs.apply.outputs.auto_code }}
+
+permissions: {}
+
+jobs:
+  classify:
+    name: Classify
+    if: vars.ASHIGARU_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      allowed: ${{ steps.guard.outputs.allowed }}
+      verdict: ${{ steps.agent.outputs.structured_output }}
+    steps:
+      - name: Fetch Ashigaru at this release
+        uses: actions/checkout@v7
+        with:
+          repository: crunchtools/ashigaru
+          ref: v2.0.0
+          path: .ashigaru-src
+          persist-credentials: false
+
+      - name: Move Ashigaru out of the workspace
+        run: mv .ashigaru-src "$RUNNER_TEMP/ashigaru"
+
+      - name: Guard
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 "$RUNNER_TEMP/ashigaru/scripts/guard.py"
+
+      - name: Check out the repository
+        if: steps.guard.outputs.allowed == 'true'
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build the prompt
+        if: steps.guard.outputs.allowed == 'true'
+        id: prompt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          python3 "$RUNNER_TEMP/ashigaru/scripts/prompt.py" triage \
+            --repo "$GITHUB_REPOSITORY" --issue "$ISSUE" --out "$RUNNER_TEMP/prompt.md"
+          echo "schema=$(jq -c . "$RUNNER_TEMP/ashigaru/schemas/triage.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Triage agent
+        if: steps.guard.outputs.allowed == 'true'
+        id: agent
+        uses: anthropics/claude-code-action/base-action@v1
+        with:
+          prompt_file: ${{ runner.temp }}/prompt.md
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --model ${{ inputs.model }}
+            --max-turns ${{ inputs.max_turns }}
+            --allowedTools "Read,Glob,Grep"
+            --json-schema '${{ steps.prompt.outputs.schema }}'
+
+  apply:
+    name: Apply verdict
+    needs: classify
+    if: needs.classify.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      auto_code: ${{ steps.apply.outputs.auto_code }}
+    steps:
+      - name: Fetch Ashigaru at this release
+        uses: actions/checkout@v7
+        with:
+          repository: crunchtools/ashigaru
+          ref: v2.0.0
+          persist-credentials: false
+
+      - name: Label and comment
+        id: apply
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          VERDICT: ${{ needs.classify.outputs.verdict }}
+          AUTO_CATEGORIES: ${{ inputs.auto_code_categories }}
+          MIN_CONFIDENCE: ${{ inputs.min_confidence }}
+        run: |
+          python3 scripts/triage_apply.py --repo "$GITHUB_REPOSITORY" --issue "$ISSUE" \
+            --result "$VERDICT" --auto-categories "$AUTO_CATEGORIES" --min-confidence "$MIN_CONFIDENCE"

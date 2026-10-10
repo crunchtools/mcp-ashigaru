@@ -1,6 +1,6 @@
 repos:
   # ruff runs from its own pre-commit environment, not a host install
-  # (constitution XII, host contract). Keep rev at the ruff version in uv.lock.
+  # (constitution XII, host contract). Keep rev at the ruff version in ci.yml.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.9
     hooks:
@@ -12,7 +12,7 @@ repos:
         types: [python]
         stages: [pre-commit, pre-merge-commit]
   - repo: https://github.com/crunchtools/constitution
-    rev: v1.22.0
+    rev: v1.23.0
     hooks:
       - id: validate-constitution
 

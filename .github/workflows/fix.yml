@@ -1,0 +1,207 @@
+# Ashigaru fix (reusable) — answer review findings and failed checks on an
+# Ashigaru pull request.
+#
+# Called on `workflow_run` of the Gatehouse workflow. It acts only on a
+# pull_request_target run for an `ashigaru/*` branch in this repository, on a
+# pull request the Ashigaru app opened. A reply to a finding re-runs Gatehouse
+# under a different event, which this workflow ignores, so a round cannot
+# trigger itself.
+#
+#   • agent   — collects unanswered findings and failed checks (waiting for
+#               checks still running), then runs the LLM with a read-only token.
+#               Output: a patch and one disposition per finding.
+#   • publish — no LLM. Pushes the patch with the app token and replies in each
+#               thread: `fixed in <sha>` or `not a bug: <reason>`.
+#
+# Rounds are counted on the pull request. When max_rounds is spent the pull
+# request gets `needs-human`, auto-merge is turned off and Ashigaru stops.
+
+name: Ashigaru fix
+
+on:
+  workflow_call:
+    inputs:
+      reviewer:
+        description: "Account that posts Gatehouse findings."
+        type: string
+        default: "github-actions[bot]"
+      bot:
+        description: "Slug of the app that opens Ashigaru pull requests."
+        type: string
+        default: "ashigaru-crunchtools"
+      max_rounds:
+        type: number
+        default: 5
+      model:
+        type: string
+        default: "sonnet"
+      escalation_model:
+        type: string
+        default: "opus"
+      escalate_at:
+        description: "Round from which the escalation model is used."
+        type: number
+        default: 3
+      allowed_tools:
+        type: string
+        default: "Read,Edit,Write,Glob,Grep"
+      max_turns:
+        type: number
+        default: 80
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+      ASHIGARU_APP_ID:
+        required: true
+      ASHIGARU_APP_KEY:
+        required: true
+
+permissions: {}
+
+jobs:
+  agent:
+    name: Fix agent
+    if: >-
+      vars.ASHIGARU_ENABLED == 'true' &&
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request_target' &&
+      startsWith(github.event.workflow_run.head_branch, 'ashigaru/') &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      actions: read
+    outputs:
+      action: ${{ steps.collect.outputs.action }}
+    steps:
+      - name: Fetch Ashigaru at this release
+        uses: actions/checkout@v7
+        with:
+          repository: crunchtools/ashigaru
+          ref: v2.0.0
+          path: .ashigaru-src
+          persist-credentials: false
+
+      - name: Move Ashigaru out of the workspace
+        run: mv .ashigaru-src "$RUNNER_TEMP/ashigaru"
+
+      - name: Collect findings and failed checks
+        id: collect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          REVIEWER: ${{ inputs.reviewer }}
+          BOT: ${{ inputs.bot }}
+          MAX_ROUNDS: ${{ inputs.max_rounds }}
+          MODEL: ${{ inputs.model }}
+          ESCALATION_MODEL: ${{ inputs.escalation_model }}
+          ESCALATE_AT: ${{ inputs.escalate_at }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python3 "$RUNNER_TEMP/ashigaru/scripts/findings.py" --repo "$GITHUB_REPOSITORY" \
+            --branch "$BRANCH" --reviewer "$REVIEWER" --bot "$BOT" --max-rounds "$MAX_ROUNDS" \
+            --model "$MODEL" --escalation-model "$ESCALATION_MODEL" --escalate-at "$ESCALATE_AT" \
+            --out "$RUNNER_TEMP/out/findings.json"
+
+      - name: Check out the pull request branch
+        if: steps.collect.outputs.action == 'fix'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          persist-credentials: false
+
+      - name: Build the prompt
+        if: steps.collect.outputs.action == 'fix'
+        id: prompt
+        run: |
+          python3 "$RUNNER_TEMP/ashigaru/scripts/prompt.py" fix --repo "$GITHUB_REPOSITORY" \
+            --findings "$RUNNER_TEMP/out/findings.json" --out "$RUNNER_TEMP/prompt.md"
+          echo "schema=$(jq -c . "$RUNNER_TEMP/ashigaru/schemas/fix.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Fix agent
+        if: steps.collect.outputs.action == 'fix'
+        id: fix
+        continue-on-error: true
+        uses: anthropics/claude-code-action/base-action@v1
+        with:
+          prompt_file: ${{ runner.temp }}/prompt.md
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --model ${{ steps.collect.outputs.model }}
+            --max-turns ${{ inputs.max_turns }}
+            --allowedTools "${{ inputs.allowed_tools }}"
+            --json-schema '${{ steps.prompt.outputs.schema }}'
+
+      - name: Collect the patch
+        if: steps.collect.outputs.action == 'fix'
+        env:
+          RESULT: ${{ steps.fix.outputs.structured_output }}
+        run: |
+          git add -A
+          git diff --cached --binary > "$RUNNER_TEMP/out/change.patch"
+          printf '%s' "$RESULT" > "$RUNNER_TEMP/out/result.json"
+          git diff --cached --stat
+
+      - name: Hand the round to the publish job
+        if: steps.collect.outputs.action == 'fix' || steps.collect.outputs.action == 'cap'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ashigaru-fix
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+
+  publish:
+    name: Push and answer findings
+    needs: agent
+    if: needs.agent.outputs.action == 'fix' || needs.agent.outputs.action == 'cap'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch Ashigaru at this release
+        uses: actions/checkout@v7
+        with:
+          repository: crunchtools/ashigaru
+          ref: v2.0.0
+          path: .ashigaru-src
+          persist-credentials: false
+
+      - name: Move Ashigaru out of the workspace
+        run: mv .ashigaru-src "$RUNNER_TEMP/ashigaru"
+
+      - name: Mint the Ashigaru app token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.ASHIGARU_APP_ID }}
+          private-key: ${{ secrets.ASHIGARU_APP_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Check out the pull request branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          token: ${{ steps.app.outputs.token }}
+
+      - name: Fetch the round
+        uses: actions/download-artifact@v8
+        with:
+          name: ashigaru-fix
+          path: ${{ runner.temp }}/out
+
+      - name: Push the fix and reply to each finding
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          MODE: ${{ needs.agent.outputs.action }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          MAX_ROUNDS: ${{ inputs.max_rounds }}
+        run: |
+          python3 "$RUNNER_TEMP/ashigaru/scripts/fix_publish.py" --repo "$GITHUB_REPOSITORY" --mode "$MODE" \
+            --findings "$RUNNER_TEMP/out/findings.json" --patch "$RUNNER_TEMP/out/change.patch" \
+            --result "$RUNNER_TEMP/out/result.json" --branch "$BRANCH" --max-rounds "$MAX_ROUNDS"

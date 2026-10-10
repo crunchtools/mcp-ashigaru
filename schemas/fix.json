@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "properties": {
+    "dispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "not_a_bug"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "disposition",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "dispositions",
+    "summary"
+  ],
+  "additionalProperties": false
+}

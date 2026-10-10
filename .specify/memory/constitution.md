@@ -1,101 +1,59 @@
-# mcp-ashigaru-crunchtools Constitution
+# ashigaru Constitution
 
-> **Version:** 1.0.0
-> **Ratified:** 2026-10-02
+> **Version:** 2.0.0
+> **Ratified:** 2026-10-10
 > **Status:** Active
-> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.22.0
-> **Profile:** MCP Server
+> **Inherits:** [crunchtools/constitution](https://github.com/crunchtools/constitution) v1.23.0
+> **Profile:** Workflow Automation
 
-This file holds what is specific to mcp-ashigaru. The fleet rules and the
-MCP Server profile apply at the inherited version and are checked against
-this repo's files by `constitution.yml`. They are not restated here; where
-this repo departs from the profile, the departure and its reason are below.
+This file holds what is specific to ashigaru. The fleet rules and the Workflow
+Automation profile apply at the inherited version and are checked against this
+repo's files by `constitution.yml`. They are not restated here.
 
 ## Purpose
 
-The crunchtools dev-ops backbone: an MCP server that dispatches Claude Code
-as sealed, headless worker containers to take a GitHub issue from a
-maintainer-supplied brief to a gated PR, a preview deployment, and, on
-instruction, a squash-merge to production. Kagetora is the foreman that
-calls it; the human holds the approval.
+Reusable workflows that triage a repository's issues and fix the bug-class
+ones: open the pull request, answer the review, and leave the merge to GitHub's
+required checks. Feature work is labeled and left for a maintainer.
 
 ## Authority Split
 
-The component that can be talked into something has the least authority:
+- **Agent jobs** (`Classify`, `Code agent`, `Fix agent`) run Claude Code with
+  the job token at read-only permissions and `persist-credentials: false`.
+  Their only other secret is the Claude token, plus the reviewer key inside the
+  pre-commit hook step of `Code agent`. Tools default to file tools; triage
+  cannot edit.
+- **Writing jobs** (`Apply verdict`, `Open pull request`, `Push and answer
+  findings`, `Queue untriaged issues`) run no model. The two publishing jobs
+  hold the Ashigaru app token, minted per job with contents, issues and
+  pull-requests write and nothing else; the sweep mints it with issues write
+  and contents read.
+- What crosses from an agent job to a writing job is schema-validated
+  structured output and a patch file. The writing job applies the patch on a
+  fresh runner and refuses one that touches `.github/`.
+- No job merges. The app has no Workflows permission and is not an
+  organization admin.
 
-- **Worker container** (`mcp-ashigaru-agent-claude`) receives only
-  `CLAUDE_CODE_OAUTH_TOKEN` and the checkout mounted at `/work`. No GitHub
-  token, no podman socket, no production secrets. Its tools are limited to
-  `Read,Edit,Write,Bash,Glob,Grep`.
-- **This server** holds `GH_TOKEN` and the podman sockets, and does git, gh
-  and podman through fixed subprocess calls, never through an LLM.
-- **The worker never reads the raw GitHub issue**; it gets the brief passed
-  to `create_run`, which arrives through the gateway's filtered lane.
+## Configured Limits
 
-## Gate Is the Arbiter
+| Limit | Value | Test |
+|-------|-------|------|
+| Switch `ASHIGARU_ENABLED` on the first job of every workflow | must be `true` | `test_the_switch_gates_the_first_job_and_every_job_has_a_timeout` |
+| Turn limit and tool list on every agent step | 40 or 80 turns | `test_every_agent_step_has_a_turn_limit_and_a_tool_list` |
+| Job timeouts | 5 to 75 minutes | same as the switch |
+| Fix rounds per pull request | 5, then `needs-human` | `test_round_cap_hands_off_instead_of_fixing` |
+| Issues queued per sweep | 5 by default, 20 at most | `test_no_run_queues_more_than_the_hard_maximum` |
+| Authors without write access | never read unless someone with write access labels the issue | `tests/test_guard.py` |
 
-A worker's own claim of success counts for nothing; the repo's gates decide.
-A run climbs three tiers (40 turns at medium effort, 60 at high, 80 at
-xhigh). Each iteration gets the prior diff, the last gate output and any
-reviewer notes; an iteration without notes moves up a tier, and past tier 3
-the run is marked `escalated` for a human. `promote` runs the gates before squash-merging unless
-the caller passes `skip_gates`, and tears down the run's preview afterwards.
+## Public Interface
 
-## Credentials
+Label names (`ready-for-triage`, `ready-to-code`, `triaged`, `needs-info`,
+`needs-human`), workflow inputs and secrets, the `ashigaru/` branch prefix, the
+round marker comment and the job names are what consumers and branch rules
+depend on. Changing one is a MAJOR release.
 
-| Variable | Use |
-|----------|-----|
-| `GH_TOKEN` | git clone/push and `gh` against the target repo |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Passed into the worker container; its only credential |
-| `ASHIGARU_NOTIFY_WEBHOOK_SECRET` | HMAC-SHA256 signing (`X-Hub-Signature-256`) for the notification webhook |
-| `ASHIGARU_MATRIX_ACCESS_TOKEN` | Matrix E2EE notification channel |
+## Release Coupling
 
-All are read from the environment once at start.
-
-## Host Integration and State
-
-- Runs as uid 1000 (`devrunner`) on the `crunchtools` network. Workers are
-  launched through devrunner's rootless podman socket (`CONTAINER_HOST`);
-  preview deployments use the host podman socket (`ASHIGARU_HOST_PODMAN`).
-- Run state lives under `ASHIGARU_STATE_DIR` (default
-  `/home/devrunner/ashigaru`): `runs/<run_id>/` (events, logs, metadata),
-  `work/` (checkouts) and `matrix-crypto/` (persistent E2EE keys). Preview
-  slot locks live in `ASHIGARU_SLOTS_DIR` (default `/srv/ashigaru/slots`,
-  at most `ASHIGARU_MAX_SLOTS`, default 5) and per-repo gate config in
-  `ASHIGARU_CONFIG_DIR` (default `/srv/ashigaru/config`).
-- Runs orphaned by a restart are recovered at startup.
-- Besides MCP tools, the server exposes a read-mostly REST API under
-  `/api/runs` and `/api/slots` for the `cockpit-ashigaru` Cockpit plugin
-  (spec 001); `DELETE /api/runs/{run_id}` is its only write.
-
-## Base Image Exception
-
-Both images build on `registry.access.redhat.com/ubi10/ubi-minimal`, not
-Hummingbird. The server shells out to git, `gh` (from the GitHub CLI RPM
-repo) and `podman-remote`, and builds `matrix-nio[e2e]` with a C++
-toolchain; the worker needs Node.js for the Claude Code CLI plus Python, uv,
-git and build tools to run fleet gates. Neither fits a distroless runtime.
-
-## Distribution Exception
-
-Container images only (`container.yml` and `agent-container.yml`, dual-push
-to Quay and GHCR); the package is not published to PyPI. The server is only
-useful next to a podman socket and the devrunner state directory, so there
-is no uvx or pip use case. The worker's Claude Code CLI version is pinned
-with the `CLAUDE_VERSION` build arg.
-
-## Instance
-
-| Context | Name |
-|---------|------|
-| GitHub repo | `crunchtools/mcp-ashigaru` |
-| Python package | `mcp-ashigaru-crunchtools` (module `mcp_ashigaru`) |
-| Server image | `quay.io/crunchtools/mcp-ashigaru` |
-| Worker image | `quay.io/crunchtools/mcp-ashigaru-agent-claude` |
-| HTTP port | 8020 |
-
-## History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0.0 | 2026-10-02 | Initial constitution, written as a v1.18.0 manifest from the README and code |
+A called workflow cannot name its own ref. Each reusable workflow fetches the
+scripts at a literal tag that equals `VERSION`; `tests/test_workflows.py` holds
+the workflows, the example, this repo's caller and the CHANGELOG together.

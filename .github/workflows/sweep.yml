@@ -1,0 +1,60 @@
+# Ashigaru sweep — drain the backlog a few issues a night.
+#
+# Runs here only, not in consumer repos. It labels the oldest untriaged issues
+# in enrolled repos `ready-for-triage`, using the Ashigaru app token so the
+# label starts each repo's own Ashigaru workflow. A repo is enrolled when it
+# carries .github/workflows/ashigaru.yml.
+#
+# `limit` is the nightly budget: it bounds how much agent work one night starts.
+
+name: Ashigaru sweep
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # 06:17 UTC, the small hours in US Eastern
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Issues to queue in this run (the script caps it at 20)."
+        type: number
+        default: 5
+      dry_run:
+        description: "List what would be queued without labeling."
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  sweep:
+    name: Queue untriaged issues
+    if: vars.ASHIGARU_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Mint the Ashigaru app token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.ASHIGARU_APP_ID }}
+          private-key: ${{ secrets.ASHIGARU_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: read
+          permission-issues: write
+
+      - name: Label the oldest untriaged issues
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          # A schedule has no inputs; a manual 0 stays 0.
+          LIMIT: ${{ github.event_name == 'schedule' && 5 || inputs.limit }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(--org "$GITHUB_REPOSITORY_OWNER" --limit "$LIMIT")
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          python3 scripts/sweep.py "${args[@]}"

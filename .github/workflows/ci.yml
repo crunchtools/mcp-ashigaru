@@ -6,31 +6,36 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-test:
+    name: Lint and test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
         with:
-          version: "latest"
+          persist-credentials: false
 
-      - name: Set up Python
-        run: uv python install 3.12
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
 
-      - name: Install dependencies
-        run: uv sync --all-extras
+      - name: Lint (ruff)
+        run: |
+          pip install ruff==0.16.9
+          ruff check .
+          ruff format --check .
 
-      - name: Ruff
-        run: uv run ruff check src
+      - name: Tests (pytest)
+        run: |
+          pip install pytest==9.1.1 pyyaml==6.0.3
+          pytest -q
 
-      - name: Mypy
-        run: uv run mypy src
-
-      - name: Pytest
-        run: uv run pytest tests/ -v
+      - name: Workflows (actionlint)
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
   gourmand:
     name: Code Quality (Gourmand)

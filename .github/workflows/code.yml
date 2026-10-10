@@ -1,0 +1,228 @@
+# Ashigaru code (reusable) — fix one issue and open a pull request.
+#
+# Two jobs on two runners, so the credential that can write never shares a
+# machine with the LLM:
+#   • agent   — runs the LLM with a read-only token and file tools. It edits
+#               the checkout, the repository's own pre-commit hooks run over
+#               the result, and failures go back to the same session (at most
+#               twice). What leaves this job is a patch and a JSON result.
+#   • publish — no LLM. On a fresh runner with the Ashigaru app token it
+#               applies the patch, pushes ashigaru/issue-N, opens the pull
+#               request and turns on auto-merge.
+#
+# Nothing here merges. GitHub merges when the required checks pass, and the
+# app cannot bypass them.
+
+name: Ashigaru code
+
+on:
+  workflow_call:
+    inputs:
+      allowed_tools:
+        description: "Tools the code agent may use. Widen per repo with care: Bash runs repo code."
+        type: string
+        default: "Read,Edit,Write,Glob,Grep"
+      model:
+        type: string
+        default: "sonnet"
+      max_turns:
+        type: number
+        default: 80
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+      ASHIGARU_APP_ID:
+        required: true
+      ASHIGARU_APP_KEY:
+        required: true
+      OPENROUTER_API_KEY:
+        description: "For the Gatehouse pre-commit hook. Without it that hook is skipped."
+        required: false
+
+permissions: {}
+
+jobs:
+  agent:
+    name: Code agent
+    if: vars.ASHIGARU_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      allowed: ${{ steps.guard.outputs.allowed }}
+    steps:
+      - name: Fetch Ashigaru at this release
+        uses: actions/checkout@v7
+        with:
+          repository: crunchtools/ashigaru
+          ref: v2.0.0
+          path: .ashigaru-src
+          persist-credentials: false
+
+      - name: Move Ashigaru out of the workspace
+        run: mv .ashigaru-src "$RUNNER_TEMP/ashigaru"
+
+      - name: Guard
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 "$RUNNER_TEMP/ashigaru/scripts/guard.py"
+
+      - name: Check out the repository
+        if: steps.guard.outputs.allowed == 'true'
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Build the prompt
+        if: steps.guard.outputs.allowed == 'true'
+        id: prompt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          python3 "$RUNNER_TEMP/ashigaru/scripts/prompt.py" code \
+            --repo "$GITHUB_REPOSITORY" --issue "$ISSUE" --out "$RUNNER_TEMP/prompt.md"
+          echo "schema=$(jq -c . "$RUNNER_TEMP/ashigaru/schemas/code.json")" >> "$GITHUB_OUTPUT"
+          # The hook config as the base branch has it; the agent cannot change this copy.
+          if [ -f .pre-commit-config.yaml ]; then
+            cp .pre-commit-config.yaml "$RUNNER_TEMP/pre-commit-config.yaml"
+            pipx install pre-commit==4.6.2
+          fi
+
+      - name: Code agent
+        if: steps.guard.outputs.allowed == 'true'
+        id: code
+        continue-on-error: true
+        uses: anthropics/claude-code-action/base-action@v1
+        with:
+          prompt_file: ${{ runner.temp }}/prompt.md
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --model ${{ inputs.model }}
+            --max-turns ${{ inputs.max_turns }}
+            --allowedTools "${{ inputs.allowed_tools }}"
+            --json-schema '${{ steps.prompt.outputs.schema }}'
+
+      # ── Inner loop: the repo's own hooks, same runner, same session ────────
+      - name: Pre-commit hooks (pass 1)
+        if: steps.guard.outputs.allowed == 'true' && steps.code.outputs.session_id != ''
+        id: hooks1
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          "$RUNNER_TEMP/ashigaru/scripts/run_hooks.sh" "$RUNNER_TEMP/pre-commit-config.yaml" "$RUNNER_TEMP/hooks.log"
+          python3 "$RUNNER_TEMP/ashigaru/scripts/prompt.py" hooks \
+            --hooks-log "$RUNNER_TEMP/hooks.log" --out "$RUNNER_TEMP/hooks-prompt.md"
+
+      - name: Code agent (hook failures, pass 1)
+        if: steps.hooks1.outputs.passed == 'false'
+        id: retry1
+        continue-on-error: true
+        uses: anthropics/claude-code-action/base-action@v1
+        with:
+          prompt_file: ${{ runner.temp }}/hooks-prompt.md
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --resume ${{ steps.code.outputs.session_id }}
+            --model ${{ inputs.model }}
+            --max-turns ${{ inputs.max_turns }}
+            --allowedTools "${{ inputs.allowed_tools }}"
+            --json-schema '${{ steps.prompt.outputs.schema }}'
+
+      - name: Pre-commit hooks (pass 2)
+        if: steps.hooks1.outputs.passed == 'false' && steps.retry1.outputs.session_id != ''
+        id: hooks2
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          "$RUNNER_TEMP/ashigaru/scripts/run_hooks.sh" "$RUNNER_TEMP/pre-commit-config.yaml" "$RUNNER_TEMP/hooks.log"
+          python3 "$RUNNER_TEMP/ashigaru/scripts/prompt.py" hooks \
+            --hooks-log "$RUNNER_TEMP/hooks.log" --out "$RUNNER_TEMP/hooks-prompt.md"
+
+      - name: Code agent (hook failures, pass 2)
+        if: steps.hooks2.outputs.passed == 'false'
+        id: retry2
+        continue-on-error: true
+        uses: anthropics/claude-code-action/base-action@v1
+        with:
+          prompt_file: ${{ runner.temp }}/hooks-prompt.md
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --resume ${{ steps.retry1.outputs.session_id }}
+            --model ${{ inputs.model }}
+            --max-turns ${{ inputs.max_turns }}
+            --allowedTools "${{ inputs.allowed_tools }}"
+            --json-schema '${{ steps.prompt.outputs.schema }}'
+
+      - name: Collect the patch
+        if: steps.guard.outputs.allowed == 'true'
+        env:
+          RESULT: ${{ steps.retry2.outputs.structured_output || steps.retry1.outputs.structured_output || steps.code.outputs.structured_output }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          git add -A
+          git diff --cached --binary > "$RUNNER_TEMP/out/change.patch"
+          printf '%s' "$RESULT" > "$RUNNER_TEMP/out/result.json"
+          git diff --cached --stat
+
+      - name: Hand the patch to the publish job
+        if: steps.guard.outputs.allowed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ashigaru-code
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+
+  publish:
+    name: Open pull request
+    needs: agent
+    if: needs.agent.outputs.allowed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Fetch Ashigaru at this release
+        uses: actions/checkout@v7
+        with:
+          repository: crunchtools/ashigaru
+          ref: v2.0.0
+          path: .ashigaru-src
+          persist-credentials: false
+
+      - name: Move Ashigaru out of the workspace
+        run: mv .ashigaru-src "$RUNNER_TEMP/ashigaru"
+
+      - name: Mint the Ashigaru app token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.ASHIGARU_APP_ID }}
+          private-key: ${{ secrets.ASHIGARU_APP_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Check out the default branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          token: ${{ steps.app.outputs.token }}
+
+      - name: Fetch the patch
+        uses: actions/download-artifact@v8
+        with:
+          name: ashigaru-code
+          path: ${{ runner.temp }}/out
+
+      - name: Branch, commit, push, open the pull request
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          python3 "$RUNNER_TEMP/ashigaru/scripts/publish.py" --repo "$GITHUB_REPOSITORY" --issue "$ISSUE" \
+            --patch "$RUNNER_TEMP/out/change.patch" --result "$RUNNER_TEMP/out/result.json" --base "$BASE"
