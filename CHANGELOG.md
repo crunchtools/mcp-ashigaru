@@ -6,7 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-10
+
+### Added
+
+- The four tools that only read (`status`, `list_runs`, `run_activity`,
+  `run_log`) publish `readOnlyHint: true`. A gateway uses it to decide whether
+  an invalid optional argument may be dropped or must refuse the call
+  (crunchtools/constitution#35).
+- Tests pin every registered tool into `READ_ONLY` or `WRITES`, and check that
+  a read-only tool changes no file under the state directory and starts no
+  subprocess. `run_build` is the control that trips both checks.
+
+### Fixed
+
+- `run_log` and `GET /api/runs/{run_id}/log` took the log name as a path:
+  an absolute path or `../` read any file the server could. The name now has
+  to resolve to a file directly inside the run directory.
+
 ### Changed
+
+- Inherits constitution v1.22.0; the workflow pins and the pre-commit hook rev
+  move with it.
 
 - Constitution is now a v1.18.0 manifest: it holds only what is specific to
   this repo; fleet and profile rules apply by reference.

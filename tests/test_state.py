@@ -89,12 +89,15 @@ def test_list_all_empty(cfg: Config) -> None:
 
 def test_list_all_with_filter(cfg: Config) -> None:
     for i in range(3):
-        RunState.create(RunMeta(
-            run_id=f"run-{i}",
-            repo="rotv" if i < 2 else "other",
-            issue=i,
-            title=f"Run {i}",
-        ), cfg)
+        RunState.create(
+            RunMeta(
+                run_id=f"run-{i}",
+                repo="rotv" if i < 2 else "other",
+                issue=i,
+                title=f"Run {i}",
+            ),
+            cfg,
+        )
     results = RunState.list_all(cfg, repo="rotv")
     assert all(r["repo"] == "rotv" for r in results)
 
@@ -111,3 +114,15 @@ def test_legacy_phase_values(cfg: Config) -> None:
     loaded = state.read_meta()
     assert loaded.phase == Phase.EDITING
     assert loaded.phase.value == "editing"
+
+
+def test_get_log_stays_in_run_dir(run_state: RunState, tmp_path: Path) -> None:
+    (run_state.run_dir / "setup.log").write_text("inside\n")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("outside\n")
+    (run_state.run_dir / "link.log").symlink_to(outside)
+
+    assert run_state.get_log("setup.log") == "inside\n"
+    assert run_state.get_log(str(outside)) == ""
+    assert run_state.get_log("../../../secret.txt") == ""
+    assert run_state.get_log("link.log") == ""

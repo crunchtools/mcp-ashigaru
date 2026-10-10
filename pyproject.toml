@@ -1,6 +1,6 @@
 [project]
 name = "mcp-ashigaru-crunchtools"
-version = "1.0.0"
+version = "1.1.0"
 description = "CrunchTools dev-ops backbone — drives features from ticket to production across all agents"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"

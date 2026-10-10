@@ -1,4 +1,4 @@
-"""mcp-ashigaru v1.0.0 — the CrunchTools dev-ops backbone.
+"""mcp-ashigaru v1.1.0 — the CrunchTools dev-ops backbone.
 
 Single source of truth for all feature development across all agents. Josui
 (desktop) and Kagetora (phone) compose these tools to drive features from
@@ -40,10 +40,15 @@ DEFAULT_PORT = 8020
 
 CFG = Config()
 
+# A gateway drops an invalid optional argument only on a tool annotated read-only;
+# on anything else it refuses the call. Only tools that change nothing get this.
+READ_ONLY = {"readOnlyHint": True}
+
 
 def _recover_orphaned_runs(config: Config) -> None:
     """Mark runs stuck in active phases as failed — they were orphaned by a restart."""
     from .models import ACTIVE_PHASES
+
     for run_info in RunState.list_all(config):
         phase_str = run_info.get("phase", "")
         try:
@@ -72,7 +77,7 @@ async def _lifespan(_server: FastMCP) -> AsyncIterator[None]:
 
 mcp = FastMCP(
     "mcp-ashigaru",
-    version="1.0.0",
+    version="1.1.0",
     instructions=(
         "CrunchTools dev-ops backbone. Any agent (Josui, Kagetora) composes "
         "these tools to drive features from ticket to production. All state "
@@ -93,8 +98,6 @@ def _now() -> str:
 
 def _strip_org(repo: str) -> str:
     return repo.rsplit("/", 1)[-1] if "/" in repo else repo
-
-
 
 
 @mcp.tool()
@@ -161,10 +164,13 @@ async def _clone_and_prepare(run_id: str, repo: str, config: Config) -> None:
         return
     meta = state.read_meta()
     await create_branch(repodir, meta.branch)
-    state.activity.append(Activity(
-        timestamp=_now(), kind=ActivityKind.GIT_OP,
-        summary=f"Cloned and branched: {meta.branch}",
-    ))
+    state.activity.append(
+        Activity(
+            timestamp=_now(),
+            kind=ActivityKind.GIT_OP,
+            summary=f"Cloned and branched: {meta.branch}",
+        )
+    )
     meta = state.read_meta()
     if meta.phase == Phase.CLONING:
         state.set_phase(Phase.QUEUED, "Clone complete, awaiting dispatch")
@@ -214,7 +220,9 @@ async def run_build(
 
     cmd = command or "echo 'no build gate configured'"
     proc = await asyncio.create_subprocess_exec(
-        "bash", "-c", cmd,
+        "bash",
+        "-c",
+        cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(repodir),
@@ -223,11 +231,14 @@ async def run_build(
     output = out.decode()[-3000:] if out else ""
     passed = proc.returncode == 0
 
-    state.activity.append(Activity(
-        timestamp=_now(), kind=ActivityKind.GATE_CHECK,
-        summary=f"Build gate: {'passed' if passed else 'FAILED'}",
-        detail=output[-500:],
-    ))
+    state.activity.append(
+        Activity(
+            timestamp=_now(),
+            kind=ActivityKind.GATE_CHECK,
+            summary=f"Build gate: {'passed' if passed else 'FAILED'}",
+            detail=output[-500:],
+        )
+    )
 
     return {
         "run_id": run_id,
@@ -268,21 +279,34 @@ async def create_pr(
 
     env = {"GH_TOKEN": CFG.gh_token}
     rc, out = await _run(
-        "gh", "pr", "create", "--draft",
-        "-R", f"{CFG.org}/{meta.repo}",
-        "--base", base, "--head", meta.branch,
-        "--title", final_title,
-        "--body", final_body,
-        env=env, log_path=log_path,
+        "gh",
+        "pr",
+        "create",
+        "--draft",
+        "-R",
+        f"{CFG.org}/{meta.repo}",
+        "--base",
+        base,
+        "--head",
+        meta.branch,
+        "--title",
+        final_title,
+        "--body",
+        final_body,
+        env=env,
+        log_path=log_path,
     )
     pr_url = out.strip().splitlines()[-1] if rc == 0 and out.strip() else None
 
     if pr_url:
         state.update_meta(pr_url=pr_url)
-        state.activity.append(Activity(
-            timestamp=_now(), kind=ActivityKind.GIT_OP,
-            summary=f"PR created: {pr_url}",
-        ))
+        state.activity.append(
+            Activity(
+                timestamp=_now(),
+                kind=ActivityKind.GIT_OP,
+                summary=f"PR created: {pr_url}",
+            )
+        )
     state.set_phase(Phase.AWAITING_REVIEW, f"PR: {pr_url or 'creation failed'}")
 
     return {"run_id": run_id, "pr_url": pr_url, "title": final_title}
@@ -301,6 +325,7 @@ async def deploy_preview(run_id: str) -> dict[str, Any]:
 
 
 _ITERABLE_PHASES = {Phase.FAILED, Phase.AWAITING_REVIEW}
+
 
 @mcp.tool()
 async def request_changes(run_id: str, notes: str = "") -> dict[str, Any]:
@@ -355,10 +380,13 @@ async def promote(run_id: str, skip_gates: bool = False) -> dict[str, Any]:
     if not skip_gates:
         gate_results = await review_mod.run_gates(run_id, CFG)
         if not gate_results.get("passed"):
-            state.activity.append(Activity(
-                timestamp=_now(), kind=ActivityKind.GATE_CHECK,
-                summary="Pre-promote gates failed — not merging",
-            ))
+            state.activity.append(
+                Activity(
+                    timestamp=_now(),
+                    kind=ActivityKind.GATE_CHECK,
+                    summary="Pre-promote gates failed — not merging",
+                )
+            )
             return {"run_id": run_id, "promoted": False, "gates": gate_results}
 
     pr_num = meta.pr_url.rstrip("/").rsplit("/", 1)[-1]
@@ -368,10 +396,13 @@ async def promote(run_id: str, skip_gates: bool = False) -> dict[str, Any]:
         await preview_mod.teardown(run_id, CFG)
         state.set_phase(Phase.SHIPPED, f"PR #{pr_num} merged and shipped")
     else:
-        state.activity.append(Activity(
-            timestamp=_now(), kind=ActivityKind.ERROR,
-            summary=f"Promote failed: {detail[:200]}",
-        ))
+        state.activity.append(
+            Activity(
+                timestamp=_now(),
+                kind=ActivityKind.ERROR,
+                summary=f"Promote failed: {detail[:200]}",
+            )
+        )
 
     return {"run_id": run_id, "promoted": ok, "detail": detail[-500:]}
 
@@ -394,9 +425,7 @@ async def cancel_run(run_id: str, reason: str = "") -> dict[str, Any]:
     return {"run_id": run_id, "cancelled": True}
 
 
-
-
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def status(run_id: str) -> dict[str, Any]:
     """Phone-readable digest: title, phase, latest activity, PR/preview URLs."""
     state = RunState.load(run_id, CFG)
@@ -421,7 +450,7 @@ async def status(run_id: str) -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_runs(
     repo: str | None = None,
     phase: str | None = None,
@@ -432,7 +461,7 @@ async def list_runs(
     return {"runs": RunState.list_all(CFG, repo=repo, phase=phase, source=source, limit=limit)}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def run_activity(run_id: str, tail: int = 50) -> dict[str, Any]:
     """Structured activity log — the full story of a run in human-readable form."""
     state = RunState.load(run_id, CFG)
@@ -447,15 +476,13 @@ async def run_activity(run_id: str, tail: int = 50) -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def run_log(run_id: str, log_name: str | None = None) -> dict[str, Any]:
     """Raw log content (agent.err, setup.log, runner.log, preview.log, or combined)."""
     state = RunState.load(run_id, CFG)
     if state is None:
         return {"error": f"unknown run_id: {run_id}"}
     return {"run_id": run_id, "log": state.get_log(log_name)}
-
-
 
 
 @mcp.custom_route("/api/runs", methods=["GET"])
@@ -525,13 +552,9 @@ async def api_slots(_request: Request) -> JSONResponse:
     return JSONResponse(mgr.list_all())
 
 
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ashigaru dev-ops backbone MCP server")
-    parser.add_argument(
-        "--transport", choices=["stdio", "sse", "streamable-http"], default="stdio"
-    )
+    parser.add_argument("--transport", choices=["stdio", "sse", "streamable-http"], default="stdio")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     args = parser.parse_args()
