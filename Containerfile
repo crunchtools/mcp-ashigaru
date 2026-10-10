@@ -24,7 +24,7 @@
 FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
 
 LABEL name="mcp-ashigaru-crunchtools" \
-      version="1.0.0" \
+      version="1.1.0" \
       summary="CrunchTools dev-ops backbone — features from ticket to production" \
       description="Ashigaru: drives features from ticket to production across all agents (Josui, Kagetora)" \
       maintainer="crunchtools.com" \

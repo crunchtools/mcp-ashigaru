@@ -43,12 +43,14 @@ class RunState:
         meta.updated = _now()
         (run_dir / "meta.json").write_text(meta.model_dump_json(indent=2))
         state = cls(run_dir, config)
-        state._activity.append(Activity(
-            timestamp=_now(),
-            kind=ActivityKind.REGISTRATION,
-            summary=f"Run created: {meta.title} ({meta.repo} #{meta.issue})",
-            phase_after=meta.phase,
-        ))
+        state._activity.append(
+            Activity(
+                timestamp=_now(),
+                kind=ActivityKind.REGISTRATION,
+                summary=f"Run created: {meta.title} ({meta.repo} #{meta.issue})",
+                phase_after=meta.phase,
+            )
+        )
         return state
 
     @classmethod
@@ -82,13 +84,15 @@ class RunState:
         if phase == Phase.FAILED and reason:
             meta.failure_reason = reason
         self._write_meta(meta)
-        self._activity.append(Activity(
-            timestamp=_now(),
-            kind=ActivityKind.PHASE_CHANGE,
-            summary=reason or f"Phase: {old_phase.value} → {phase.value}",
-            phase_before=old_phase,
-            phase_after=phase,
-        ))
+        self._activity.append(
+            Activity(
+                timestamp=_now(),
+                kind=ActivityKind.PHASE_CHANGE,
+                summary=reason or f"Phase: {old_phase.value} → {phase.value}",
+                phase_before=old_phase,
+                phase_after=phase,
+            )
+        )
         if phase in (Phase.ESCALATED, Phase.CANCELLED) and meta.branch:
             self._cleanup_remote_branch(meta)
 
@@ -114,11 +118,14 @@ class RunState:
         except RuntimeError:
             orphan = f"{meta.repo}:{meta.branch}"
             logger.warning("No running event loop; remote branch %s was not deleted", orphan)
-            self.activity.append(Activity(
-                timestamp=_now(), kind=ActivityKind.ERROR,
-                summary=f"Remote branch {orphan} was left behind",
-                detail="Deletion needs a running event loop. Delete it by hand.",
-            ))
+            self.activity.append(
+                Activity(
+                    timestamp=_now(),
+                    kind=ActivityKind.ERROR,
+                    summary=f"Remote branch {orphan} was left behind",
+                    detail="Deletion needs a running event loop. Delete it by hand.",
+                )
+            )
 
     def update_meta(self, **fields: Any) -> None:
         meta = self.read_meta()
@@ -142,12 +149,14 @@ class RunState:
 
     def write_feedback(self, notes: str) -> None:
         (self._dir / "feedback.txt").write_text(notes)
-        self._activity.append(Activity(
-            timestamp=_now(),
-            kind=ActivityKind.FEEDBACK,
-            summary=f"Feedback: {notes[:100]}",
-            detail=notes,
-        ))
+        self._activity.append(
+            Activity(
+                timestamp=_now(),
+                kind=ActivityKind.FEEDBACK,
+                summary=f"Feedback: {notes[:100]}",
+                detail=notes,
+            )
+        )
 
     def read_feedback(self) -> str:
         p = self._dir / "feedback.txt"
@@ -187,8 +196,9 @@ class RunState:
 
     def get_log(self, log_name: str | None = None, max_bytes: int = 50_000) -> str:
         if log_name:
-            p = self._dir / log_name
-            if not p.exists():
+            # log_name comes from the caller: only a file directly in the run dir.
+            p = (self._dir / log_name).resolve()
+            if p.parent != self._dir.resolve() or not p.is_file():
                 return ""
             content = p.read_text()
             return content[-max_bytes:] if len(content) > max_bytes else content
@@ -239,19 +249,21 @@ class RunState:
                 continue
             if source and meta.get("source") != source:
                 continue
-            results.append({
-                "run_id": meta.get("run_id", entry.name),
-                "repo": meta.get("repo"),
-                "issue": meta.get("issue"),
-                "title": meta.get("title", ""),
-                "phase": meta.get("phase"),
-                "source": meta.get("source", "ashigaru"),
-                "current_tier": meta.get("current_tier"),
-                "model": meta.get("model"),
-                "pr_url": meta.get("pr_url"),
-                "preview_url": meta.get("preview_url"),
-                "created": meta.get("created"),
-                "attempts": len(meta.get("attempts", [])),
-            })
+            results.append(
+                {
+                    "run_id": meta.get("run_id", entry.name),
+                    "repo": meta.get("repo"),
+                    "issue": meta.get("issue"),
+                    "title": meta.get("title", ""),
+                    "phase": meta.get("phase"),
+                    "source": meta.get("source", "ashigaru"),
+                    "current_tier": meta.get("current_tier"),
+                    "model": meta.get("model"),
+                    "pr_url": meta.get("pr_url"),
+                    "preview_url": meta.get("preview_url"),
+                    "created": meta.get("created"),
+                    "attempts": len(meta.get("attempts", [])),
+                }
+            )
         results.sort(key=lambda r: r.get("created") or "", reverse=True)
         return results[:limit]
